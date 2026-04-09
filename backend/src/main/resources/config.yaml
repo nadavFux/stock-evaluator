@@ -1,0 +1,26 @@
+# Time-based ranges
+startTimes: [50, 80, 110, 140, 170, 200, 230, 260, 290, 320, 350, 380, 410, 440, 470]
+selectTimes: [30]
+searchTimes: [30, 80, 130, 180]
+longMovingAvgTimes: [140]
+
+# Filter-based ranges
+sellCutOffPerc: [0.93]
+lowerPriceToLongAvgBuyIn: [0.92]
+higherPriceToLongAvgBuyIn: [1.02]
+timeFrameForUpwardLongAvg: [40]
+timeFrameForOscillator: [110]
+maxPERatios: [25]
+aboveAvgRatingPricePerc: [1.0]
+timeFrameForUpwardShortPrice: [1]
+maxRSI: [100.0]
+minMarketCap: [1300.0]
+maxMarketCap: [2750.0]
+minRatesOfAvgInc: [1.1]
+minRatings: [3.75]
+maxRatings: [4.6]
+
+# Global Project Settings
+sectors: [101010, 101020, 151010, 151020, 151030, 151040, 151050, 201010]
+exchanges: ["TASE", "NYSE", "NasdaqGS", "NasdaqGM", "NasdaqCM"]
+outputPath: "C:/Users/NF/IdeaProjects/stock-analyzer-java/output"
