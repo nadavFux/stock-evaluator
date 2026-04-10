@@ -91,4 +91,25 @@ public class ParamOptimizerTest {
         // (Risk free rate is 0.0)
         assertEquals(15.0, sim.calculateSimulationScore(), 0.001);
     }
+
+    @Test
+    public void testRandomizeRespectsBounds() {
+        SimulationParams center = new SimulationParams(0.95, 0.9, 1.1, 50, 1.05, 20, 100, 70.0, 1000.0, 140, 1.1, 25, 3.75, 4.6, 2750.0, 0.05);
+        
+        SimulationRangeConfig config = new SimulationRangeConfig();
+        ParamOptimizer optimizer = new ParamOptimizer(config);
+        
+        for (int i = 0; i < 100; i++) {
+            SimulationParams rand = optimizer.randomize(center, 0.2); // 20% radius
+            
+            assertTrue(rand.sellCutOffPerc() >= 0.5 && rand.sellCutOffPerc() <= 1.0);
+            assertTrue(rand.lowerPriceToLongAvgBuyIn() >= 0.5 && rand.lowerPriceToLongAvgBuyIn() <= 1.0);
+            assertTrue(rand.higherPriceToLongAvgBuyIn() >= 1.0 && rand.higherPriceToLongAvgBuyIn() <= 1.5);
+            assertTrue(rand.timeFrameForUpwardLongAvg() >= 5 && rand.timeFrameForUpwardLongAvg() <= 200);
+            assertTrue(rand.maxRSI() >= 0 && rand.maxRSI() <= 100.0);
+            assertTrue(rand.minMarketCap() < rand.maxMarketCap());
+            assertTrue(rand.minRating() < rand.maxRating());
+            assertTrue(rand.minRating() >= 0 && rand.maxRating() <= 5.0);
+        }
+    }
 }
