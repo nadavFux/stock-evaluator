@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Save, X, RotateCcw, Plus, Layout, Sliders, Filter, Target, Globe, FileJson, Copy, Activity, CheckSquare, Square, Trash2, Info, Calculator } from 'lucide-react';
+import { Save, X, RotateCcw, Plus, Layout, Sliders, Filter, Target, Globe, FileJson, Copy, Activity, CheckSquare, Square, Info, Calculator } from 'lucide-react';
 
 interface ConfigPanelProps {
     config: any;
@@ -8,6 +8,117 @@ interface ConfigPanelProps {
     profiles: any[];
     onSavePreset: (name: string, description: string, config: any) => void;
 }
+
+const RangeInput = ({ label, values, onChange, step = 1, min = 0 }: { label: string, values: number[], onChange: (newValues: number[]) => void, step?: number, min?: number }) => {
+    const [bulkMode, setBulkMode] = useState<'none' | 'comma' | 'generator'>('none');
+    const [commaText, setCommaText] = useState('');
+    const [genMin, setGenMin] = useState(min);
+    const [genMax, setGenMax] = useState(min + step * 5);
+    const [genStep, setGenStep] = useState(step);
+
+    const handleApplyComma = () => {
+        const parsed = commaText.split(',').map(s => parseFloat(s.trim())).filter(n => !isNaN(n));
+        onChange(parsed);
+        setBulkMode('none');
+    };
+
+    const handleApplyGenerator = () => {
+        const generated = [];
+        for (let i = genMin; i <= genMax; i += genStep) {
+            generated.push(parseFloat(i.toFixed(4))); // fix floating point issues
+        }
+        onChange(generated);
+        setBulkMode('none');
+    };
+
+    return (
+        <div className="bg-slate-900/40 border border-slate-800 rounded-xl p-4 transition-all hover:border-slate-700">
+            <div className="flex justify-between items-center mb-3">
+                <div className="flex items-center gap-2">
+                    <label className="text-slate-400 text-xs font-bold uppercase tracking-widest">{label}</label>
+                    <Info size={12} className="text-slate-600 hover:text-blue-400 cursor-help" />
+                </div>
+                <div className="flex gap-1">
+                    <button 
+                        onClick={() => { setBulkMode('comma'); setCommaText(values.join(', ')); }}
+                        className={`text-xs px-2 py-1 rounded-lg transition-colors ${bulkMode === 'comma' ? 'bg-blue-600 text-white' : 'bg-slate-800 text-slate-400 hover:bg-slate-700'}`}
+                    >
+                        CSV
+                    </button>
+                    <button 
+                        onClick={() => setBulkMode('generator')}
+                        className={`text-xs px-2 py-1 rounded-lg transition-colors ${bulkMode === 'generator' ? 'bg-blue-600 text-white' : 'bg-slate-800 text-slate-400 hover:bg-slate-700'}`}
+                    >
+                        Gen
+                    </button>
+                    <button 
+                        onClick={() => onChange([...values, min])}
+                        className="text-blue-400 hover:text-blue-300 p-1 rounded-lg bg-blue-400/5 transition-colors ml-1"
+                        title="Add single value"
+                    >
+                        <Plus size={14} />
+                    </button>
+                </div>
+            </div>
+
+            {bulkMode === 'comma' && (
+                <div className="mb-3 flex gap-2 items-center bg-[#0f172a] p-2 rounded-lg border border-slate-700">
+                    <input 
+                        type="text" 
+                        value={commaText} 
+                        onChange={e => setCommaText(e.target.value)} 
+                        onKeyDown={e => e.key === 'Enter' && handleApplyComma()}
+                        placeholder="e.g. 10, 20, 30" 
+                        className="bg-transparent text-sm text-blue-100 flex-1 outline-none font-mono"
+                    />
+                    <button onClick={handleApplyComma} className="text-xs bg-emerald-600/20 text-emerald-400 px-2 py-1 rounded hover:bg-emerald-600/30">Apply</button>
+                    <button onClick={() => setBulkMode('none')} className="text-xs text-slate-500 hover:text-slate-300 px-2 py-1"><X size={14}/></button>
+                </div>
+            )}
+
+            {bulkMode === 'generator' && (
+                <div className="mb-3 flex gap-2 items-center bg-[#0f172a] p-2 rounded-lg border border-slate-700 text-xs">
+                    <input type="number" value={genMin} onChange={e => setGenMin(parseFloat(e.target.value))} placeholder="Min" className="bg-slate-800 w-14 px-1 py-1 rounded text-blue-100" />
+                    <span className="text-slate-500">to</span>
+                    <input type="number" value={genMax} onChange={e => setGenMax(parseFloat(e.target.value))} placeholder="Max" className="bg-slate-800 w-14 px-1 py-1 rounded text-blue-100" />
+                    <span className="text-slate-500">step</span>
+                    <input type="number" value={genStep} onChange={e => setGenStep(parseFloat(e.target.value))} placeholder="Step" className="bg-slate-800 w-14 px-1 py-1 rounded text-blue-100" />
+                    <button onClick={handleApplyGenerator} className="bg-emerald-600/20 text-emerald-400 px-2 py-1 rounded hover:bg-emerald-600/30 ml-auto">Apply</button>
+                    <button onClick={() => setBulkMode('none')} className="text-slate-500 hover:text-slate-300 px-1 py-1"><X size={14}/></button>
+                </div>
+            )}
+
+            <div className="flex flex-wrap gap-2">
+                {values.map((v: number, i: number) => (
+                    <div key={i} className="flex items-center gap-1 bg-[#0f172a] border border-slate-700 rounded-lg pr-1 overflow-hidden group">
+                        <input 
+                            type="number"
+                            step={step}
+                            value={v}
+                            onChange={(e) => {
+                                const next = [...values];
+                                next[i] = parseFloat(e.target.value);
+                                onChange(next);
+                            }}
+                            className="bg-transparent text-sm text-blue-100 w-20 px-2 py-1 outline-none font-mono"
+                        />
+                        <button 
+                            onClick={() => {
+                                const next = [...values];
+                                next.splice(i, 1);
+                                onChange(next);
+                            }}
+                            className="text-slate-600 hover:text-red-400 transition-colors"
+                        >
+                            <X size={12} />
+                        </button>
+                    </div>
+                ))}
+                {values.length === 0 && <span className="text-red-400 text-xs italic">Empty range (Will cause optimizer to skip)</span>}
+            </div>
+        </div>
+    );
+};
 
 const GICS_INDUSTRIES = [
     { code: 101010, name: 'Energy Equipment & Services', sector: 'Energy' },
@@ -186,54 +297,6 @@ const ConfigPanel: React.FC<ConfigPanelProps> = ({ config, onSave, onClose, prof
         return count;
     };
 
-    const RangeInput = ({ label, field, step = 1, min = 0 }: { label: string, field: string, step?: number, min?: number }) => {
-        const values = localConfig[field] || [];
-        return (
-            <div className="bg-slate-900/40 border border-slate-800 rounded-xl p-4 transition-all hover:border-slate-700">
-                <div className="flex justify-between items-center mb-3">
-                    <div className="flex items-center gap-2">
-                        <label className="text-slate-400 text-xs font-bold uppercase tracking-widest">{label}</label>
-                        <Info size={12} className="text-slate-600 hover:text-blue-400 cursor-help" />
-                    </div>
-                    <button 
-                        onClick={() => updateField(field, [...values, min])}
-                        className="text-blue-400 hover:text-blue-300 p-1 rounded-lg bg-blue-400/5 transition-colors"
-                    >
-                        <Plus size={14} />
-                    </button>
-                </div>
-                <div className="flex flex-wrap gap-2">
-                    {values.map((v: any, i: number) => (
-                        <div key={i} className="flex items-center gap-1 bg-[#0f172a] border border-slate-700 rounded-lg pr-1 overflow-hidden group">
-                            <input 
-                                type="number"
-                                step={step}
-                                value={v}
-                                onChange={(e) => {
-                                    const next = [...values];
-                                    next[i] = parseFloat(e.target.value);
-                                    updateField(field, next);
-                                }}
-                                className="bg-transparent text-sm text-blue-100 w-20 px-2 py-1 outline-none font-mono"
-                            />
-                            <button 
-                                onClick={() => {
-                                    const next = [...values];
-                                    next.splice(i, 1);
-                                    updateField(field, next);
-                                }}
-                                className="text-slate-600 hover:text-red-400 transition-colors"
-                            >
-                                <X size={12} />
-                            </button>
-                        </div>
-                    ))}
-                    {values.length === 0 && <span className="text-red-400 text-xs italic">Empty range (Will cause optimizer to skip)</span>}
-                </div>
-            </div>
-        );
-    };
-
     const uniqueSectors = Array.from(new Set(GICS_INDUSTRIES.map(i => i.sector)));
 
     return (
@@ -329,32 +392,32 @@ const ConfigPanel: React.FC<ConfigPanelProps> = ({ config, onSave, onClose, prof
                             <div className="max-w-5xl space-y-8 pb-12">
                                 {activeCategory === 'timing' && (
                                     <div className="grid grid-cols-1 md:grid-cols-2 gap-6 animate-in fade-in slide-in-from-bottom-4">
-                                        <RangeInput label="Start Times (Days Ago)" field="startTimes" />
-                                        <RangeInput label="Search Window (Days)" field="searchTimes" />
-                                        <RangeInput label="Selection Period (Days)" field="selectTimes" />
-                                        <RangeInput label="Moving Average Period" field="longMovingAvgTimes" />
+                                        <RangeInput label="Start Times (Days Ago)" values={localConfig.startTimes || []} onChange={(v) => updateField('startTimes', v)} />
+                                        <RangeInput label="Search Window (Days)" values={localConfig.searchTimes || []} onChange={(v) => updateField('searchTimes', v)} />
+                                        <RangeInput label="Selection Period (Days)" values={localConfig.selectTimes || []} onChange={(v) => updateField('selectTimes', v)} />
+                                        <RangeInput label="Moving Average Period" values={localConfig.longMovingAvgTimes || []} onChange={(v) => updateField('longMovingAvgTimes', v)} />
                                     </div>
                                 )}
 
                                 {activeCategory === 'filters' && (
                                     <div className="grid grid-cols-1 md:grid-cols-2 gap-6 animate-in fade-in slide-in-from-bottom-4">
-                                        <RangeInput label="Sell Cut-Off %" field="sellCutOffPerc" step={0.01} />
-                                        <RangeInput label="Lower MA Gap Buy-In" field="lowerPriceToLongAvgBuyIn" step={0.01} />
-                                        <RangeInput label="Higher MA Gap Buy-In" field="higherPriceToLongAvgBuyIn" step={0.01} />
-                                        <RangeInput label="Min Market Cap (M)" field="minMarketCap" step={100} />
-                                        <RangeInput label="Max Market Cap (M)" field="maxMarketCap" step={100} />
-                                        <RangeInput label="Risk Free Rate (Annual)" field="riskFreeRate" step={0.01} />
+                                        <RangeInput label="Sell Cut-Off %" values={localConfig.sellCutOffPerc || []} onChange={(v) => updateField('sellCutOffPerc', v)} step={0.01} />
+                                        <RangeInput label="Lower MA Gap Buy-In" values={localConfig.lowerPriceToLongAvgBuyIn || []} onChange={(v) => updateField('lowerPriceToLongAvgBuyIn', v)} step={0.01} />
+                                        <RangeInput label="Higher MA Gap Buy-In" values={localConfig.higherPriceToLongAvgBuyIn || []} onChange={(v) => updateField('higherPriceToLongAvgBuyIn', v)} step={0.01} />
+                                        <RangeInput label="Min Market Cap (M)" values={localConfig.minMarketCap || []} onChange={(v) => updateField('minMarketCap', v)} step={100} />
+                                        <RangeInput label="Max Market Cap (M)" values={localConfig.maxMarketCap || []} onChange={(v) => updateField('maxMarketCap', v)} step={100} />
+                                        <RangeInput label="Risk Free Rate (Annual)" values={localConfig.riskFreeRate || []} onChange={(v) => updateField('riskFreeRate', v)} step={0.01} />
                                     </div>
                                 )}
 
                                 {activeCategory === 'technicals' && (
                                     <div className="grid grid-cols-1 md:grid-cols-2 gap-6 animate-in fade-in slide-in-from-bottom-4">
-                                        <RangeInput label="MA Upward Timeframe" field="timeFrameForUpwardLongAvg" />
-                                        <RangeInput label="Oscillator Window" field="timeFrameForOscillator" />
-                                        <RangeInput label="Max PE Ratio" field="maxPERatios" />
-                                        <RangeInput label="Min Rating (1-5)" field="minRatings" step={0.1} />
-                                        <RangeInput label="Max Rating (1-5)" field="maxRatings" step={0.1} />
-                                        <RangeInput label="Max RSI" field="maxRSI" step={1} />
+                                        <RangeInput label="MA Upward Timeframe" values={localConfig.timeFrameForUpwardLongAvg || []} onChange={(v) => updateField('timeFrameForUpwardLongAvg', v)} />
+                                        <RangeInput label="Oscillator Window" values={localConfig.timeFrameForOscillator || []} onChange={(v) => updateField('timeFrameForOscillator', v)} />
+                                        <RangeInput label="Max PE Ratio" values={localConfig.maxPERatios || []} onChange={(v) => updateField('maxPERatios', v)} />
+                                        <RangeInput label="Min Rating (1-5)" values={localConfig.minRatings || []} onChange={(v) => updateField('minRatings', v)} step={0.1} />
+                                        <RangeInput label="Max Rating (1-5)" values={localConfig.maxRatings || []} onChange={(v) => updateField('maxRatings', v)} step={0.1} />
+                                        <RangeInput label="Max RSI" values={localConfig.maxRSI || []} onChange={(v) => updateField('maxRSI', v)} step={1} />
                                     </div>
                                 )}
 
