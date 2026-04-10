@@ -7,10 +7,11 @@ public record SimulationResult(
     double aiPredictedReturn,
     double rvol,
     double volatility,
-    double momentum
+    double momentum,
+    double[] features
 ) implements Serializable {
     public SimulationResult(double heuristicScore, double aiPredictedReturn) {
-        this(heuristicScore, aiPredictedReturn, 0.0, 0.0, 0.0);
+        this(heuristicScore, aiPredictedReturn, 0.0, 0.0, 0.0, null);
     }
 
     public double getEval() {

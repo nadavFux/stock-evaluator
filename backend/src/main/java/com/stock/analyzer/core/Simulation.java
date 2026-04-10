@@ -42,8 +42,8 @@ public class Simulation {
         if (features == null) return new SimulationResult(0.0, -1.0, 0.0, 0.0, 0.0, null);
 
         // 1. Calculate Heuristic Score (Traditional)
-        double maScore = normalize(features[0], params.lowerPriceToLongAvgBuyIn(), params.higherPriceToLongAvgBuyIn());
-        double reversionScore = 1.0 - normalize(features[1], 0.0, 0.20); 
+        double maScore = 1.0 - normalize(features[0], params.lowerPriceToLongAvgBuyIn(), params.higherPriceToLongAvgBuyIn());
+        double reversionScore = normalize(features[1], 0.0, 0.20); 
         double ratingScore = normalize(features[2], params.minRating(), params.maxRating());
         double momentumScore = normalize(features[3], params.minRateOfAvgInc(), params.minRateOfAvgInc() * 1.3);
         double rvolScore = normalize(features[4], 0.5, 2.0);
@@ -82,20 +82,42 @@ public class Simulation {
 
         double volatility = pkg.getVolatility(stockIdx, dayIdx, 20);
 
-        double maScore = normalize(maGap, params.lowerPriceToLongAvgBuyIn(), params.higherPriceToLongAvgBuyIn());
-        double reversionScore = 1.0 - normalize(distFromMA, 0.0, 0.20); 
+        double avgVol = 0.0;
+        int volCount = 0;
+        int volStart = Math.max(pkg.offsets[stockIdx], dayIdx - 30 + 1);
+        for(int k = volStart; k <= dayIdx; k++) {
+            avgVol += pkg.volumes[stockIdx][k];
+            volCount++;
+        }
+        avgVol = volCount > 0 ? avgVol / volCount : 0.0;
+        double rvol = avgVol > 0 ? pkg.volumes[stockIdx][dayIdx] / avgVol : 1.0;
+
+        double peg = 1.0;
+        int epsPrevIdx = dayIdx - 250;
+        if (epsPrevIdx >= pkg.offsets[stockIdx] && pkg.epss[stockIdx][epsPrevIdx] > 0) {
+            double epsGrowth = (pkg.epss[stockIdx][dayIdx] - pkg.epss[stockIdx][epsPrevIdx]) / pkg.epss[stockIdx][epsPrevIdx];
+            double pe = currentPrice / pkg.epss[stockIdx][dayIdx];
+            peg = epsGrowth > 0 ? pe / (epsGrowth * 100) : 2.0;
+        }
+
+        double maScore = 1.0 - normalize(maGap, params.lowerPriceToLongAvgBuyIn(), params.higherPriceToLongAvgBuyIn());
+        double reversionScore = normalize(distFromMA, 0.0, 0.20); 
         double ratingScore = normalize(currentRating, params.minRating(), params.maxRating());
         double momentumScore = normalize(momentum, params.minRateOfAvgInc(), params.minRateOfAvgInc() * 1.3);
+        double rvolScore = normalize(rvol, 0.5, 2.0);
+        double pegScore = 1.0 - normalize(peg, 0.0, 2.0);
         double volScore = 1.0 - normalize(volatility, 0.0, 0.05);
 
         double heuristic = (maScore * weights.movingAvgGapWeight()) +
                (reversionScore * weights.reversionToMeanWeight()) +
                (ratingScore * weights.ratingWeight()) +
                (momentumScore * weights.upwardIncRateWeight()) +
+               (rvolScore * weights.rvolWeight()) +
+               (pegScore * weights.pegWeight()) +
                (volScore * weights.volatilityCompressionWeight());
 
-        double[] features = new double[]{maGap, distFromMA, currentRating, momentum, 1.0, 1.0, volatility};
-        return new SimulationResult(heuristic, -1.0, 1.0, volatility, momentum, features);
+        double[] features = new double[]{maGap, distFromMA, currentRating, momentum, rvol, peg, volatility};
+        return new SimulationResult(heuristic, -1.0, rvol, volatility, momentum, features);
     }
 
     public double[] extractFeatures(List<Double> price, List<Double> movingAvg, int index, Stock stock, List<Double> epss, List<Double> rating, List<Double> caps, List<Double> volumes) {

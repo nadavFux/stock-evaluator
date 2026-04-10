@@ -12,6 +12,7 @@ public class SimulationDataPackage {
     public final double[][] priceSqPrefixSum;
     public final String[] tickers;
     public final String[][] dates;
+    public final int[] offsets;
     public final int stockCount;
     public final int daysCount;
 
@@ -24,6 +25,7 @@ public class SimulationDataPackage {
         this.daysCount = maxDays;
         this.tickers = new String[stockCount];
         this.dates = new String[stockCount][daysCount];
+        this.offsets = new int[stockCount];
         this.closePrices = new double[stockCount][daysCount];
         this.volumes = new double[stockCount][daysCount];
         this.ratings = new double[stockCount][daysCount];
@@ -37,6 +39,7 @@ public class SimulationDataPackage {
             tickers[i] = s.stock().ticker_symbol();
             int currentSize = s.closePrices().size();
             int offset = daysCount - currentSize;
+            this.offsets[i] = offset;
             
             double runningSum = 0;
             double runningSqSum = 0;
@@ -74,23 +77,30 @@ public class SimulationDataPackage {
     }
 
     public double getAvg(int stockIdx, int dayIdx, int period) {
-        if (dayIdx < 0) return 0.0;
-        if (dayIdx < period) {
-            return pricePrefixSum[stockIdx][dayIdx] / (dayIdx + 1);
+        if (dayIdx < offsets[stockIdx]) return 0.0;
+        int startIdx = Math.max(dayIdx - period, offsets[stockIdx] - 1);
+        int actualPeriod = dayIdx - startIdx;
+        if (actualPeriod <= 0) return 0.0;
+
+        double sum = pricePrefixSum[stockIdx][dayIdx];
+        if (startIdx >= offsets[stockIdx]) {
+            sum -= pricePrefixSum[stockIdx][startIdx];
         }
-        double sum = pricePrefixSum[stockIdx][dayIdx] - pricePrefixSum[stockIdx][dayIdx - period];
-        return sum / period;
+        return sum / actualPeriod;
     }
 
     public double getVolatility(int stockIdx, int dayIdx, int period) {
-        if (dayIdx < 1) return 0.01;
-        int actualPeriod = Math.min(dayIdx + 1, period);
+        if (dayIdx < offsets[stockIdx] + 1) return 0.01;
+        int startIdx = Math.max(dayIdx - period, offsets[stockIdx] - 1);
+        int actualPeriod = dayIdx - startIdx;
+        if (actualPeriod <= 0) return 0.01;
+
         double sum = pricePrefixSum[stockIdx][dayIdx];
         double sqSum = priceSqPrefixSum[stockIdx][dayIdx];
         
-        if (dayIdx >= actualPeriod) {
-            sum -= pricePrefixSum[stockIdx][dayIdx - actualPeriod];
-            sqSum -= priceSqPrefixSum[stockIdx][dayIdx - actualPeriod];
+        if (startIdx >= offsets[stockIdx]) {
+            sum -= pricePrefixSum[stockIdx][startIdx];
+            sqSum -= priceSqPrefixSum[stockIdx][startIdx];
         }
         
         double mean = sum / actualPeriod;

@@ -102,7 +102,7 @@ public class ParamOptimizer {
                         count++;
 
                         // Pruning check
-                        if (!collectMLData && count >= 5 && (totalScore / count < -20.0)) return -100.0;
+                        if (!collectMLData && count >= 15 && (totalScore / count < -30.0)) return -100.0;
                     }
                 }
             }

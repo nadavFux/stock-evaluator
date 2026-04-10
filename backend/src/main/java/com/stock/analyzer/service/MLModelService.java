@@ -54,8 +54,16 @@ public class MLModelService {
     public double predict(double[] features) {
         if (model == null) return -1.0;
         try {
-            return model.predict(Tuple.of(features, model.schema()));
+            // Smile Formula includes the response variable in the schema.
+            // We need to provide a Tuple that matches the training schema exactly.
+            String[] names = {"f1", "f2", "f3", "f4", "f5", "f6", "f7", "actualGain"};
+            double[] dataWithDummy = new double[8];
+            System.arraycopy(features, 0, dataWithDummy, 0, 7);
+            dataWithDummy[7] = 0.0; // dummy value for actualGain
+            
+            return model.predict(Tuple.of(dataWithDummy, DataFrame.of(new double[][]{dataWithDummy}, names).schema()));
         } catch (Exception e) {
+            logger.error("ML Prediction failed", e);
             return -1.0;
         }
     }
