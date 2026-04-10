@@ -34,31 +34,38 @@ public class Pipeline {
 
         List<CompletableFuture<List<StockGraphState>>> sectorFutures = sectors.stream()
                 .map(sector -> CompletableFuture.supplyAsync(() -> {
-                    logger.info("starting for {}", sector);
-                    List<BaseStock> bases = dataService.fetchAndFilter(sector, exchanges, minCap);
-                    logger.info("fetched for {}", sector);
-                    List<CompletableFuture<StockGraphState>> stockFutures = bases.stream()
-                            .map(base -> CompletableFuture.supplyAsync(() -> dataService.enrich(base), ioExecutor)
-                                    .thenApplyAsync(enriched -> {
-                                        if (enriched == null) return null;
-                                        logger.info("further enrich for {}", enriched.ticker_symbol());
-                                        return graphingService.fetchGraphState(enriched);
-                                    }, ioExecutor))
-                            .toList();
-                    List<StockGraphState> sectorResults = CompletableFuture.allOf(stockFutures.toArray(new CompletableFuture[0]))
-                            .thenApply(v -> stockFutures.stream()
-                                    .map(CompletableFuture::join)
-                                    .filter(Objects::nonNull)
-                                    .toList())
-                            .join();
-                    logger.info("finished indicators  for {}", sector);
-                    int current = completed.incrementAndGet();
-                    if (progressCallback != null) {
-                        int percent = (int) ((current / (double) sectors.size()) * 100);
-                        progressCallback.accept("Hydrating sectors: " + percent + "% (" + current + "/" + sectors.size() + ")");
-                    }
-                    return sectorResults;
-                }, ioExecutor))
+                            logger.info("starting for {}", sector);
+                            List<BaseStock> bases = dataService.fetchAndFilter(sector, exchanges, minCap);
+                            logger.info("fetched for {}", sector);
+                            return bases;
+                        }, ioExecutor)
+                        .thenCompose(bases -> {
+                            List<CompletableFuture<StockGraphState>> stockFutures = bases.stream()
+                                    .map(base -> CompletableFuture.supplyAsync(() -> dataService.enrich(base), ioExecutor)
+                                            .thenApplyAsync(enriched -> {
+                                                if (enriched == null) return null;
+                                                logger.info("further enrich for {}", enriched.ticker_symbol());
+                                                return graphingService.fetchGraphState(enriched);
+                                            }, ioExecutor))
+                                    .toList();
+
+                            return CompletableFuture.allOf(stockFutures.toArray(new CompletableFuture[0]))
+                                    .thenApply(v -> {
+                                        logger.info("finished indicators  for {}", sector);
+                                        return stockFutures.stream()
+                                                .map(CompletableFuture::join)
+                                                .filter(Objects::nonNull)
+                                                .toList();
+                                    });
+                        })
+                        .thenApply(sectorResults -> {
+                            int current = completed.incrementAndGet();
+                            if (progressCallback != null) {
+                                int percent = (int) ((current / (double) sectors.size()) * 100);
+                                progressCallback.accept("Hydrating sectors: " + percent + "% (" + current + "/" + sectors.size() + ")");
+                            }
+                            return sectorResults;
+                        }))
                 .toList();
 
         return CompletableFuture.allOf(sectorFutures.toArray(new CompletableFuture[0]))
