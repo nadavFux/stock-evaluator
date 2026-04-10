@@ -1,5 +1,6 @@
 package com.stock.analyzer.core;
 
+import com.stock.analyzer.model.SimulationDataPackage;
 import com.stock.analyzer.model.SimulationParams;
 import com.stock.analyzer.model.SimulationResult;
 import com.stock.analyzer.model.Stock;
@@ -38,7 +39,7 @@ public class Simulation {
 
     public SimulationResult calculateDualScore(List<Double> price, List<Double> movingAvg, int index, Stock stock, List<Double> epss, List<Double> rating, List<Double> caps, List<Double> volumes) {
         double[] features = extractFeatures(price, movingAvg, index, stock, epss, rating, caps, volumes);
-        if (features == null) return new SimulationResult(0.0, -1.0);
+        if (features == null) return new SimulationResult(0.0, -1.0, 0.0, 0.0, 0.0, null);
 
         // 1. Calculate Heuristic Score (Traditional)
         double maScore = normalize(features[0], params.lowerPriceToLongAvgBuyIn(), params.higherPriceToLongAvgBuyIn());
@@ -63,7 +64,38 @@ public class Simulation {
             aiPrediction = mlService.predict(features);
         }
 
-        return new SimulationResult(heuristic, aiPrediction, features[4], features[6], features[3]);
+        return new SimulationResult(heuristic, aiPrediction, features[4], features[6], features[3], features);
+    }
+
+    public SimulationResult calculateFastScore(SimulationDataPackage pkg, int stockIdx, int dayIdx) {
+        double currentPrice = pkg.closePrices[stockIdx][dayIdx];
+        double currentMA = pkg.getAvg(stockIdx, dayIdx, params.longMovingAvgTime());
+        if (currentMA == 0) return new SimulationResult(0.0, -1.0, 0, 0, 0, null);
+
+        double maGap = currentPrice / currentMA;
+        double distFromMA = Math.abs(maGap - 1.0);
+        double currentRating = pkg.ratings[stockIdx][dayIdx];
+        
+        double avgNow = pkg.getAvg(stockIdx, dayIdx, params.timeFrameForUpwardLongAvg());
+        double avgPrev = pkg.getAvg(stockIdx, Math.max(0, dayIdx - params.timeFrameForUpwardLongAvg()), params.timeFrameForUpwardLongAvg());
+        double momentum = avgPrev > 0 ? avgNow / avgPrev : 1.0;
+
+        double volatility = pkg.getVolatility(stockIdx, dayIdx, 20);
+
+        double maScore = normalize(maGap, params.lowerPriceToLongAvgBuyIn(), params.higherPriceToLongAvgBuyIn());
+        double reversionScore = 1.0 - normalize(distFromMA, 0.0, 0.20); 
+        double ratingScore = normalize(currentRating, params.minRating(), params.maxRating());
+        double momentumScore = normalize(momentum, params.minRateOfAvgInc(), params.minRateOfAvgInc() * 1.3);
+        double volScore = 1.0 - normalize(volatility, 0.0, 0.05);
+
+        double heuristic = (maScore * weights.movingAvgGapWeight()) +
+               (reversionScore * weights.reversionToMeanWeight()) +
+               (ratingScore * weights.ratingWeight()) +
+               (momentumScore * weights.upwardIncRateWeight()) +
+               (volScore * weights.volatilityCompressionWeight());
+
+        double[] features = new double[]{maGap, distFromMA, currentRating, momentum, 1.0, 1.0, volatility};
+        return new SimulationResult(heuristic, -1.0, 1.0, volatility, momentum, features);
     }
 
     public double[] extractFeatures(List<Double> price, List<Double> movingAvg, int index, Stock stock, List<Double> epss, List<Double> rating, List<Double> caps, List<Double> volumes) {
