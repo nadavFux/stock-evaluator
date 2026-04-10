@@ -1,8 +1,8 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Client } from '@stomp/stompjs';
 import SockJS from 'sockjs-client';
-import { Play, Settings, Activity, List, TrendingUp, AlertCircle, BarChart3, ChevronRight, Search, X, Download, Target, ChevronDown } from 'lucide-react';
-import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell } from 'recharts';
+import { Play, Settings, Activity, List, TrendingUp, BarChart3, ChevronRight, Search, X, Download, Target, ChevronDown } from 'lucide-react';
+import { BarChart, Bar, XAxis, Tooltip, ResponsiveContainer, Cell } from 'recharts';
 import StockChart from './StockChart';
 import ConfigPanel from './ConfigPanel';
 
@@ -31,31 +31,41 @@ const StockDashboard: React.FC = () => {
     const [showConfig, setShowConfig] = useState(false);
     const [searchTerm, setSearchTerm] = useState('');
     const [profiles, setProfiles] = useState<Profile[]>([]);
-    const [currentConfig, setCurrentConfig] = useState<any>({
-        startTimes: [50, 110, 200],
-        selectTimes: [30],
-        searchTimes: [30, 80, 130],
-        longMovingAvgTimes: [140],
-        sellCutOffPerc: [0.93],
-        lowerPriceToLongAvgBuyIn: [0.92],
-        higherPriceToLongAvgBuyIn: [1.02],
-        timeFrameForUpwardLongAvg: [40],
-        timeFrameForOscillator: [110],
-        maxPERatios: [25],
-        aboveAvgRatingPricePerc: [1.0],
-        timeFrameForUpwardShortPrice: [1],
-        maxRSI: [100.0],
-        minMarketCap: [1300.0],
-        maxMarketCap: [2750.0],
-        minRatesOfAvgInc: [1.1],
-        minRatings: [3.75],
-        maxRatings: [4.6],
-        riskFreeRate: [0.05],
-        sectors: [101010, 101020, 151010, 151020, 151030, 151050],
-        exchanges: ["TASE", "NYSE", "NasdaqGS"],
-        outputPath: "output"
+    const [currentConfig, setCurrentConfig] = useState<any>(() => {
+        const saved = localStorage.getItem('stockAnalyzerConfig');
+        if (saved) {
+            try { return JSON.parse(saved); } catch (e) {}
+        }
+        return {
+            startTimes: [50, 110, 200],
+            selectTimes: [30],
+            searchTimes: [30, 80, 130],
+            longMovingAvgTimes: [140],
+            sellCutOffPerc: [0.93],
+            lowerPriceToLongAvgBuyIn: [0.92],
+            higherPriceToLongAvgBuyIn: [1.02],
+            timeFrameForUpwardLongAvg: [40],
+            timeFrameForOscillator: [110],
+            maxPERatios: [25],
+            aboveAvgRatingPricePerc: [1.0],
+            timeFrameForUpwardShortPrice: [1],
+            maxRSI: [100.0],
+            minMarketCap: [1300.0],
+            maxMarketCap: [2750.0],
+            minRatesOfAvgInc: [1.1],
+            minRatings: [3.75],
+            maxRatings: [4.6],
+            riskFreeRate: [0.05],
+            sectors: [101010, 101020, 151010, 151020, 151030, 151050],
+            exchanges: ["TASE", "NYSE", "NasdaqGS"],
+            outputPath: "output"
+        };
     });
     const stompClient = useRef<Client | null>(null);
+
+    useEffect(() => {
+        localStorage.setItem('stockAnalyzerConfig', JSON.stringify(currentConfig));
+    }, [currentConfig]);
 
     useEffect(() => {
         const client = new Client({
@@ -72,7 +82,9 @@ const StockDashboard: React.FC = () => {
         
         fetchProfiles();
         
-        return () => client.deactivate();
+        return () => {
+            client.deactivate();
+        };
     }, []);
 
     const fetchProfiles = async () => {
@@ -80,9 +92,6 @@ const StockDashboard: React.FC = () => {
             const res = await fetch('http://localhost:8080/api/profiles');
             const data = await res.json();
             setProfiles(data);
-            if (data.length > 0) {
-                setCurrentConfig(JSON.parse(data[0].configJson));
-            }
         } catch (error) {
             console.error('Failed to fetch profiles', error);
         }
@@ -294,7 +303,7 @@ const StockDashboard: React.FC = () => {
                                             cursor={{ fill: 'rgba(255,255,255,0.05)' }}
                                         />
                                         <Bar dataKey="val" radius={[6, 6, 0, 0]}>
-                                            {featureImportance.map((entry, index) => (
+                                            {featureImportance.map((_, index) => (
                                                 <Cell key={`cell-${index}`} fill={['#3b82f6', '#8b5cf6', '#ec4899', '#f59e0b', '#10b981'][index % 5]} />
                                             ))}
                                         </Bar>
