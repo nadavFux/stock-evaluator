@@ -26,74 +26,62 @@ public class ParamOptimizer {
     }
 
     public SimulationParams optimize(List<StockGraphState> allStocks) {
-        logger.info("Starting Parallel Coordinate Descent Optimization...");
+        logger.info("Starting Iterative Random Search with Zoom Optimization...");
         SimulationDataPackage dataPkg = new SimulationDataPackage(allStocks);
 
-        SimulationParams currentParams = new SimulationParams(
+        SimulationParams centerParams = new SimulationParams(
                 config.sellCutOffPerc.get(0), config.lowerPriceToLongAvgBuyIn.get(0), config.higherPriceToLongAvgBuyIn.get(0),
                 config.timeFrameForUpwardLongAvg.get(0), config.aboveAvgRatingPricePerc.get(0), config.timeFrameForUpwardShortPrice.get(0),
                 config.timeFrameForOscillator.get(0), config.maxRSI.get(0), config.minMarketCap.get(0), config.longMovingAvgTimes.get(0),
                 config.minRatesOfAvgInc.get(0), config.maxPERatios.get(0), config.minRatings.get(0), config.maxRatings.get(0), config.maxMarketCap.get(0),
                 config.riskFreeRate.get(0)
         );
-        double bestScore = evaluate(currentParams, dataPkg, false);
+        double bestScore = evaluate(centerParams, dataPkg, false);
         logger.info("Initial Score: {}", bestScore);
 
-        boolean improved = true;
+        double radius = 0.2;
         int iterations = 0;
-        while (improved && iterations < 5) {
-            improved = false;
+        int populationSize = 50;
+
+        while (radius >= 0.01 && iterations < 10) {
             iterations++;
-            logger.info("Starting Parallel Optimization Iteration {}", iterations);
+            logger.info("Starting Generation {} with radius {}", iterations, radius);
 
-            currentParams = findBestInParallel(dataPkg, currentParams, config.sellCutOffPerc, (p, v) -> p.toBuilder().sellCutOffPerc(v).build());
-            currentParams = findBestInParallel(dataPkg, currentParams, config.lowerPriceToLongAvgBuyIn, (p, v) -> p.toBuilder().lowerPriceToLongAvgBuyIn(v).build());
-            currentParams = findBestInParallel(dataPkg, currentParams, config.higherPriceToLongAvgBuyIn, (p, v) -> p.toBuilder().higherPriceToLongAvgBuyIn(v).build());
-            currentParams = findBestInParallel(dataPkg, currentParams, config.timeFrameForUpwardLongAvg, (p, v) -> p.toBuilder().timeFrameForUpwardLongAvg(v).build());
-            currentParams = findBestInParallel(dataPkg, currentParams, config.aboveAvgRatingPricePerc, (p, v) -> p.toBuilder().aboveAvgRatingPricePerc(v).build());
-            currentParams = findBestInParallel(dataPkg, currentParams, config.timeFrameForUpwardShortPrice, (p, v) -> p.toBuilder().timeFrameForUpwardShortPrice(v).build());
-            currentParams = findBestInParallel(dataPkg, currentParams, config.timeFrameForOscillator, (p, v) -> p.toBuilder().timeFrameForOscillator(v).build());
-            currentParams = findBestInParallel(dataPkg, currentParams, config.maxRSI, (p, v) -> p.toBuilder().maxRSI(v).build());
-            currentParams = findBestInParallel(dataPkg, currentParams, config.minMarketCap, (p, v) -> p.toBuilder().minMarketCap(v).build());
-            currentParams = findBestInParallel(dataPkg, currentParams, config.longMovingAvgTimes, (p, v) -> p.toBuilder().longMovingAvgTime(v).build());
-            currentParams = findBestInParallel(dataPkg, currentParams, config.minRatesOfAvgInc, (p, v) -> p.toBuilder().minRateOfAvgInc(v).build());
-            currentParams = findBestInParallel(dataPkg, currentParams, config.maxPERatios, (p, v) -> p.toBuilder().maxPERatio(v).build());
-            currentParams = findBestInParallel(dataPkg, currentParams, config.minRatings, (p, v) -> p.toBuilder().minRating(v).build());
-            currentParams = findBestInParallel(dataPkg, currentParams, config.maxRatings, (p, v) -> p.toBuilder().maxRating(v).build());
-            currentParams = findBestInParallel(dataPkg, currentParams, config.maxMarketCap, (p, v) -> p.toBuilder().maxMarketCap(v).build());
-            currentParams = findBestInParallel(dataPkg, currentParams, config.riskFreeRate, (p, v) -> p.toBuilder().riskFreeRate(v).build());
+            List<CompletableFuture<ParamScore>> futures = new java.util.ArrayList<>();
+            
+            // Add current center to prevent regression
+            final SimulationParams currentCenter = centerParams;
+            final double currentBestScore = bestScore;
+            futures.add(CompletableFuture.supplyAsync(() -> new ParamScore(currentCenter, evaluate(currentCenter, dataPkg, false))));
 
-            double newScore = evaluate(currentParams, dataPkg, false);
-            if (newScore > bestScore) {
-                bestScore = newScore;
-                improved = true;
+            // Generate N-1 random neighbors
+            for (int i = 0; i < populationSize - 1; i++) {
+                SimulationParams randParams = randomize(centerParams, radius);
+                futures.add(CompletableFuture.supplyAsync(() -> new ParamScore(randParams, evaluate(randParams, dataPkg, false))));
             }
-            logger.info("End of Iteration {}. Best Score: {}", iterations, bestScore);
+
+            ParamScore bestInGen = CompletableFuture.allOf(futures.toArray(new CompletableFuture[0]))
+                    .thenApply(v -> futures.stream()
+                            .map(CompletableFuture::join)
+                            .max(Comparator.comparingDouble(ParamScore::score))
+                            .orElse(new ParamScore(currentCenter, currentBestScore)))
+                    .join();
+
+            if (bestInGen.score() > bestScore) {
+                bestScore = bestInGen.score();
+                centerParams = bestInGen.params();
+                logger.info("Generation {} improved best score to {}", iterations, bestScore);
+            } else {
+                logger.info("Generation {} found no better parameters.", iterations);
+            }
+            
+            radius *= 0.75; // Zoom in
         }
 
         logger.info("Optimization complete. Final evaluation and ML data collection...");
-        evaluate(currentParams, dataPkg, true);
+        evaluate(centerParams, dataPkg, true);
 
-        return currentParams;
-    }
-
-    private <T> SimulationParams findBestInParallel(SimulationDataPackage pkg, SimulationParams current, List<T> range, java.util.function.BiFunction<SimulationParams, T, SimulationParams> withFunc) {
-        if (range == null || range.size() <= 1) return current;
-
-        List<CompletableFuture<ParamScore>> futures = range.stream()
-                .map(val -> CompletableFuture.supplyAsync(() -> {
-                    SimulationParams test = withFunc.apply(current, val);
-                    return new ParamScore(test, evaluate(test, pkg, false));
-                }))
-                .toList();
-
-        return CompletableFuture.allOf(futures.toArray(new CompletableFuture[0]))
-                .thenApply(v -> futures.stream()
-                        .map(CompletableFuture::join)
-                        .max(Comparator.comparingDouble(ParamScore::score))
-                        .map(ParamScore::params)
-                        .orElse(current))
-                .join();
+        return centerParams;
     }
 
     private double evaluate(SimulationParams params, SimulationDataPackage pkg, boolean collectMLData) {
