@@ -17,7 +17,11 @@ public class SimulationDataPackage {
 
     public SimulationDataPackage(List<StockGraphState> stocks) {
         this.stockCount = stocks.size();
-        this.daysCount = stocks.get(0).closePrices().size();
+        int maxDays = 0;
+        for (StockGraphState s : stocks) {
+            maxDays = Math.max(maxDays, s.closePrices().size());
+        }
+        this.daysCount = maxDays;
         this.tickers = new String[stockCount];
         this.dates = new String[stockCount][daysCount];
         this.closePrices = new double[stockCount][daysCount];
@@ -31,21 +35,40 @@ public class SimulationDataPackage {
         for (int i = 0; i < stockCount; i++) {
             StockGraphState s = stocks.get(i);
             tickers[i] = s.stock().ticker_symbol();
+            int currentSize = s.closePrices().size();
+            int offset = daysCount - currentSize;
+            
             double runningSum = 0;
             double runningSqSum = 0;
-            for (int j = 0; j < daysCount; j++) {
-                double p = s.closePrices().get(j) != null ? s.closePrices().get(j) : 0.0;
-                closePrices[i][j] = p;
-                volumes[i][j] = s.volumes().get(j) != null ? s.volumes().get(j) : 0.0;
-                ratings[i][j] = s.rating().get(j) != null ? s.rating().get(j) : 0.0;
-                epss[i][j] = s.epss().get(j) != null ? s.epss().get(j) : 0.0;
-                caps[i][j] = s.caps().get(j) != null ? s.caps().get(j) : 0.0;
-                dates[i][j] = s.dates().get(j);
+            
+            // Fill padded zeros for initial indices if any
+            for (int j = 0; j < offset; j++) {
+                closePrices[i][j] = 0;
+                volumes[i][j] = 0;
+                ratings[i][j] = 0;
+                epss[i][j] = 0;
+                caps[i][j] = 0;
+                dates[i][j] = null;
+                pricePrefixSum[i][j] = 0;
+                priceSqPrefixSum[i][j] = 0;
+            }
+
+            for (int j = 0; j < currentSize; j++) {
+                int targetIdx = j + offset;
+                Double pValue = s.closePrices().get(j);
+                double p = (pValue != null) ? pValue : 0.0;
+                
+                closePrices[i][targetIdx] = p;
+                volumes[i][targetIdx] = s.volumes().get(j) != null ? s.volumes().get(j) : 0.0;
+                ratings[i][targetIdx] = s.rating().get(j) != null ? s.rating().get(j) : 0.0;
+                epss[i][targetIdx] = s.epss().get(j) != null ? s.epss().get(j) : 0.0;
+                caps[i][targetIdx] = s.caps().get(j) != null ? s.caps().get(j) : 0.0;
+                dates[i][targetIdx] = s.dates().get(j);
 
                 runningSum += p;
                 runningSqSum += (p * p);
-                pricePrefixSum[i][j] = runningSum;
-                priceSqPrefixSum[i][j] = runningSqSum;
+                pricePrefixSum[i][targetIdx] = runningSum;
+                priceSqPrefixSum[i][targetIdx] = runningSqSum;
             }
         }
     }
