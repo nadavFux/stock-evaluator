@@ -8,12 +8,14 @@ import org.slf4j.LoggerFactory;
 
 import java.util.Comparator;
 import java.util.List;
+import java.util.Random;
 import java.util.concurrent.CompletableFuture;
 
 public class ParamOptimizer {
     private static final Logger logger = LoggerFactory.getLogger(ParamOptimizer.class);
     private final SimulationRangeConfig config;
     private final MLModelService mlService = new MLModelService();
+    private final Random random = new Random();
 
     public ParamOptimizer(SimulationRangeConfig config) {
         this.config = config;
@@ -150,6 +152,45 @@ public class ParamOptimizer {
                 }
             }
         }
+    }
+
+    public SimulationParams randomize(SimulationParams center, double radius) {
+        double minCap = Math.max(0.0, center.minMarketCap() * (1 + randomDouble(radius)));
+        double maxCap = Math.max(minCap + 1.0, center.maxMarketCap() * (1 + randomDouble(radius)));
+        
+        double minRating = clamp(center.minRating() * (1 + randomDouble(radius)), 0.0, 4.9);
+        double maxRating = clamp(center.maxRating() * (1 + randomDouble(radius)), minRating + 0.1, 5.0);
+
+        return new SimulationParams(
+            clamp(center.sellCutOffPerc() * (1 + randomDouble(radius)), 0.5, 1.0),
+            clamp(center.lowerPriceToLongAvgBuyIn() * (1 + randomDouble(radius)), 0.5, 1.0),
+            clamp(center.higherPriceToLongAvgBuyIn() * (1 + randomDouble(radius)), 1.0, 1.5),
+            clampInt((int)(center.timeFrameForUpwardLongAvg() * (1 + randomDouble(radius))), 5, 200),
+            clamp(center.aboveAvgRatingPricePerc() * (1 + randomDouble(radius)), 0.5, 2.0),
+            clampInt((int)(center.timeFrameForUpwardShortPrice() * (1 + randomDouble(radius))), 1, 50),
+            clampInt((int)(center.timeFrameForOscillator() * (1 + randomDouble(radius))), 10, 200),
+            clamp(center.maxRSI() * (1 + randomDouble(radius)), 0.0, 100.0),
+            minCap,
+            clampInt((int)(center.longMovingAvgTime() * (1 + randomDouble(radius))), 50, 300),
+            clamp(center.minRateOfAvgInc() * (1 + randomDouble(radius)), 0.8, 2.0),
+            clampInt((int)(center.maxPERatio() * (1 + randomDouble(radius))), 0, 100),
+            minRating,
+            maxRating,
+            maxCap,
+            clamp(center.riskFreeRate() * (1 + randomDouble(radius)), 0.0, 0.10)
+        );
+    }
+
+    private double randomDouble(double radius) {
+        return (random.nextDouble() * 2 * radius) - radius;
+    }
+
+    private double clamp(double val, double min, double max) {
+        return Math.max(min, Math.min(max, val));
+    }
+
+    private int clampInt(int val, int min, int max) {
+        return Math.max(min, Math.min(max, val));
     }
 
     private record ParamScore(SimulationParams params, double score) {
