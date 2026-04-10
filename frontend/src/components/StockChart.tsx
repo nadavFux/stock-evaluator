@@ -1,5 +1,5 @@
 import React, { useEffect, useRef } from 'react';
-import { createChart, ColorType } from 'lightweight-charts';
+import { createChart, ColorType, CandlestickSeries, LineSeries, createSeriesMarkers } from 'lightweight-charts';
 import type { IChartApi } from 'lightweight-charts';
 
 interface StockChartProps {
@@ -27,7 +27,7 @@ const StockChart: React.FC<StockChartProps> = ({ data, markers }) => {
             height: 400,
         });
 
-        const candlestickSeries = chart.addCandlestickSeries({
+        const candlestickSeries = chart.addSeries(CandlestickSeries, {
             upColor: '#10b981',
             downColor: '#ef4444',
             borderVisible: false,
@@ -35,15 +35,11 @@ const StockChart: React.FC<StockChartProps> = ({ data, markers }) => {
             wickDownColor: '#ef4444',
         });
 
-        if (!candlestickSeries) return;
-
-        const maSeries = chart.addLineSeries({
+        const maSeries = chart.addSeries(LineSeries, {
             color: '#3b82f6',
             lineWidth: 2,
             title: 'Long MA',
         });
-
-        if (!maSeries) return;
 
         // Prepare data
         if (!data?.closePrices || !data?.dates || !data?.avgs) {
@@ -72,8 +68,8 @@ const StockChart: React.FC<StockChartProps> = ({ data, markers }) => {
 
         if (chartData.length === 0) return;
 
-        candlestickSeries.setData(chartData);
-        maSeries.setData(maData);
+        candlestickSeries.setData(chartData as any);
+        maSeries.setData(maData as any);
 
         // Add Markers
         if (markers && markers.length > 0) {
@@ -84,8 +80,7 @@ const StockChart: React.FC<StockChartProps> = ({ data, markers }) => {
                 shape: m.type === 'BUY' ? 'arrowUp' : 'arrowDown',
                 text: m.type
             }));
-            // @ts-ignore
-            candlestickSeries.setMarkers(chartMarkers);
+            createSeriesMarkers(candlestickSeries, chartMarkers as any);
         }
 
         chart.timeScale().fitContent();
