@@ -137,7 +137,7 @@ public class Simulation {
         double currentRating = rating.get(index);
         
         double avgNow = StatsCalculator.calculateSlidingAvg(movingAvg, index, params.timeFrameForUpwardLongAvg(), stock.ticker_symbol());
-        double avgPrev = StatsCalculator.calculateSlidingAvg(movingAvg, index - params.timeFrameForUpwardLongAvg(), params.timeFrameForUpwardLongAvg(), stock.ticker_symbol());
+        double avgPrev = StatsCalculator.calculateSlidingAvg(movingAvg, Math.max(0, index - params.timeFrameForUpwardLongAvg()), params.timeFrameForUpwardLongAvg(), stock.ticker_symbol());
         double momentum = avgPrev > 0 ? avgNow / avgPrev : 1.0;
 
         double avgVol = StatsCalculator.calculateAvgVolume(volumes, index, 30, stock.ticker_symbol());
