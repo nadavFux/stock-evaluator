@@ -68,6 +68,11 @@ public class Simulation {
     }
 
     public SimulationResult calculateFastScore(SimulationDataPackage pkg, int stockIdx, int dayIdx) {
+        // Enforce strict lookback window to match StatsCalculator behavior
+        if (dayIdx - pkg.offsets[stockIdx] < params.longMovingAvgTime() - 1) {
+            return new SimulationResult(0.0, -1.0, 0, 0, 0, null);
+        }
+
         double currentPrice = pkg.closePrices[stockIdx][dayIdx];
         double currentMA = pkg.getAvg(stockIdx, dayIdx, params.longMovingAvgTime());
         if (currentMA == 0) return new SimulationResult(0.0, -1.0, 0, 0, 0, null);
@@ -157,19 +162,25 @@ public class Simulation {
     }
 
     public double calculateSimulationScore() {
-        double totalExcessReturn = 0.0;
-        int tradeCount = 0;
+        double totalTimeFrameScore = 0.0;
+        int validFrames = 0;
         double dailyRiskFreeRate = Math.pow(1 + params.riskFreeRate(), 1.0 / 252) - 1;
 
         for (var tradeFrame : timeFrames.values()) {
+            double frameExcessReturn = 0.0;
+            int frameTrades = 0;
             for (var trade : tradeFrame.Trades()) {
                 double tradeReturn = trade.getLastGained() * 100;
                 double riskFreeReturn = (Math.pow(1 + dailyRiskFreeRate, trade.getDays()) - 1) * 100;
-                totalExcessReturn += (tradeReturn - riskFreeReturn);
-                tradeCount++;
+                frameExcessReturn += (tradeReturn - riskFreeReturn);
+                frameTrades++;
+            }
+            if (frameTrades > 0) {
+                totalTimeFrameScore += frameExcessReturn / frameTrades;
+                validFrames++;
             }
         }
-        return tradeCount > 0 ? totalExcessReturn / tradeCount : 0.0;
+        return validFrames > 0 ? totalTimeFrameScore / validFrames : 0.0;
     }
 
     public void AddTimeFrame(StocksTradeTimeFrame timeFrame) {

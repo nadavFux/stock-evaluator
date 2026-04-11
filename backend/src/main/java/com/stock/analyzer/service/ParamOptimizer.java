@@ -127,7 +127,8 @@ public class ParamOptimizer {
                     double currentPrice = pkg.closePrices[sIdx][i + j];
                     double currentMA = pkg.getAvg(sIdx, i + j, sim.params.longMovingAvgTime());
                     if (currentPrice < (currentMA * cutOff)) {
-                        double exitPrice = Math.max(currentMA * cutOff, currentPrice);
+                        // Realistic execution: we can only exit at the current close price, not magically at the stop loss.
+                        double exitPrice = currentPrice;
                         double gain = (exitPrice - buyPrice) / buyPrice;
                         tf.AddRow(new StockTrade(pkg.tickers[sIdx], gain, daysBack - i + timeStart, j, buyPrice / buyMA, pkg.caps[sIdx][i], pkg.dates[sIdx][i]));
 
@@ -143,29 +144,29 @@ public class ParamOptimizer {
     }
 
     public SimulationParams randomize(SimulationParams center, double radius) {
-        double minCap = Math.max(0.0, center.minMarketCap() * (1 + randomDouble(radius)));
-        double maxCap = Math.max(minCap + 1.0, center.maxMarketCap() * (1 + randomDouble(radius)));
+        double minCap = Math.max(0.0, center.minMarketCap() + randomDouble(radius) * Math.max(center.minMarketCap(), 1000.0));
+        double maxCap = Math.max(minCap + 1.0, center.maxMarketCap() + randomDouble(radius) * Math.max(center.maxMarketCap(), 1000.0));
         
-        double minRating = clamp(center.minRating() * (1 + randomDouble(radius)), 0.0, 4.9);
-        double maxRating = clamp(center.maxRating() * (1 + randomDouble(radius)), minRating + 0.1, 5.0);
+        double minRating = clamp(center.minRating() + randomDouble(radius) * Math.max(center.minRating(), 1.0), 0.0, 4.9);
+        double maxRating = clamp(center.maxRating() + randomDouble(radius) * Math.max(center.maxRating(), 1.0), minRating + 0.1, 5.0);
 
         return new SimulationParams(
-            clamp(center.sellCutOffPerc() * (1 + randomDouble(radius)), 0.5, 1.0),
-            clamp(center.lowerPriceToLongAvgBuyIn() * (1 + randomDouble(radius)), 0.5, 1.0),
-            clamp(center.higherPriceToLongAvgBuyIn() * (1 + randomDouble(radius)), 1.0, 1.5),
-            clampInt((int)(center.timeFrameForUpwardLongAvg() * (1 + randomDouble(radius))), 5, 200),
-            clamp(center.aboveAvgRatingPricePerc() * (1 + randomDouble(radius)), 0.5, 2.0),
-            clampInt((int)(center.timeFrameForUpwardShortPrice() * (1 + randomDouble(radius))), 1, 50),
-            clampInt((int)(center.timeFrameForOscillator() * (1 + randomDouble(radius))), 10, 200),
-            clamp(center.maxRSI() * (1 + randomDouble(radius)), 0.0, 100.0),
+            clamp(center.sellCutOffPerc() + randomDouble(radius) * Math.max(center.sellCutOffPerc(), 0.1), 0.5, 1.0),
+            clamp(center.lowerPriceToLongAvgBuyIn() + randomDouble(radius) * Math.max(center.lowerPriceToLongAvgBuyIn(), 0.1), 0.5, 1.0),
+            clamp(center.higherPriceToLongAvgBuyIn() + randomDouble(radius) * Math.max(center.higherPriceToLongAvgBuyIn(), 0.1), 1.0, 1.5),
+            clampInt((int)(center.timeFrameForUpwardLongAvg() + randomDouble(radius) * Math.max(center.timeFrameForUpwardLongAvg(), 5)), 5, 200),
+            clamp(center.aboveAvgRatingPricePerc() + randomDouble(radius) * Math.max(center.aboveAvgRatingPricePerc(), 0.1), 0.5, 2.0),
+            clampInt((int)(center.timeFrameForUpwardShortPrice() + randomDouble(radius) * Math.max(center.timeFrameForUpwardShortPrice(), 5)), 1, 50),
+            clampInt((int)(center.timeFrameForOscillator() + randomDouble(radius) * Math.max(center.timeFrameForOscillator(), 5)), 10, 200),
+            clamp(center.maxRSI() + randomDouble(radius) * Math.max(center.maxRSI(), 10.0), 0.0, 100.0),
             minCap,
-            clampInt((int)(center.longMovingAvgTime() * (1 + randomDouble(radius))), 50, 300),
-            clamp(center.minRateOfAvgInc() * (1 + randomDouble(radius)), 0.8, 2.0),
-            clampInt((int)(center.maxPERatio() * (1 + randomDouble(radius))), 0, 100),
+            clampInt((int)(center.longMovingAvgTime() + randomDouble(radius) * Math.max(center.longMovingAvgTime(), 10)), 50, 300),
+            clamp(center.minRateOfAvgInc() + randomDouble(radius) * Math.max(center.minRateOfAvgInc(), 0.1), 0.8, 2.0),
+            clampInt((int)(center.maxPERatio() + randomDouble(radius) * Math.max(center.maxPERatio(), 5)), 0, 100),
             minRating,
             maxRating,
             maxCap,
-            clamp(center.riskFreeRate() * (1 + randomDouble(radius)), 0.0, 0.10)
+            clamp(center.riskFreeRate() + randomDouble(radius) * Math.max(center.riskFreeRate(), 0.01), 0.0, 0.10)
         );
     }
 
