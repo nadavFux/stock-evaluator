@@ -75,6 +75,7 @@ public class ParamOptimizer {
                 logger.info("Generation {} found no better parameters.", iterations);
             }
             
+            com.stock.analyzer.core.StatsCalculator.clearCache();
             radius *= 0.75; // Zoom in
         }
 
@@ -86,7 +87,6 @@ public class ParamOptimizer {
 
     private double evaluate(SimulationParams params, SimulationDataPackage pkg, boolean collectMLData) {
         Simulation simulation = new Simulation(params);
-        double totalScore = 0;
         int count = 0;
 
         for (int startTime : config.startTimes) {
@@ -98,17 +98,16 @@ public class ParamOptimizer {
                     }
                     if (!timeFrame.Trades().isEmpty()) {
                         simulation.AddTimeFrame(timeFrame);
-                        totalScore += simulation.calculateSimulationScore();
                         count++;
 
-                        // Pruning check
-                        if (!collectMLData && count >= 15 && (totalScore / count < -30.0)) return -100.0;
+                        // Pruning check using the actual current simulation score
+                        if (!collectMLData && count >= 15 && (simulation.calculateSimulationScore() < -30.0)) return -100.0;
                     }
                 }
             }
         }
 
-        return count > 0 ? totalScore / count : -100.0;
+        return count > 0 ? simulation.calculateSimulationScore() : -100.0;
     }
 
     private void fastSimulate(SimulationDataPackage pkg, int sIdx, int daysBack, int searchTime, Simulation sim, StocksTradeTimeFrame tf, boolean ml) {
@@ -126,8 +125,8 @@ public class ParamOptimizer {
                 for (int j = 1; j < searchLimit - i; j++) {
                     double currentPrice = pkg.closePrices[sIdx][i + j];
                     double currentMA = pkg.getAvg(sIdx, i + j, sim.params.longMovingAvgTime());
-                    if (currentPrice < (currentMA * cutOff)) {
-                        // Realistic execution: we can only exit at the current close price, not magically at the stop loss.
+                    // Realistic execution: exit at stop-loss OR at the end of the simulation period
+                    if (currentPrice < (currentMA * cutOff) || (j == searchLimit - i - 1)) {
                         double exitPrice = currentPrice;
                         double gain = (exitPrice - buyPrice) / buyPrice;
                         tf.AddRow(new StockTrade(pkg.tickers[sIdx], gain, daysBack - i + timeStart, j, buyPrice / buyMA, pkg.caps[sIdx][i], pkg.dates[sIdx][i]));

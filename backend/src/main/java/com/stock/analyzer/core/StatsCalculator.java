@@ -132,6 +132,14 @@ public class StatsCalculator {
         return movingAverages;
     }
 
+    public static void clearCache() {
+        preComputedHighs.clear();
+        preComputedLows.clear();
+        preComputedMoving.clear();
+        preComputedVolatility.clear();
+        preComputedAvgVolume.clear();
+    }
+
     public static void WriteStat() {
         if (config == null) {
             logger.error("StatsCalculator not initialized with config");

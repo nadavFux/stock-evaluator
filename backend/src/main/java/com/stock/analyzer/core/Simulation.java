@@ -99,7 +99,7 @@ public class Simulation {
 
         double peg = 1.0;
         int epsPrevIdx = dayIdx - 250;
-        if (epsPrevIdx >= pkg.offsets[stockIdx] && pkg.epss[stockIdx][epsPrevIdx] > 0) {
+        if (epsPrevIdx >= pkg.offsets[stockIdx] && pkg.epss[stockIdx][epsPrevIdx] > 0 && pkg.epss[stockIdx][dayIdx] > 0) {
             double epsGrowth = (pkg.epss[stockIdx][dayIdx] - pkg.epss[stockIdx][epsPrevIdx]) / pkg.epss[stockIdx][epsPrevIdx];
             double pe = currentPrice / pkg.epss[stockIdx][dayIdx];
             peg = epsGrowth > 0 ? pe / (epsGrowth * 100) : 2.0;
@@ -144,7 +144,7 @@ public class Simulation {
         double rvol = avgVol > 0 ? volumes.get(index) / avgVol : 1.0;
 
         double peg = 1.0;
-        if (index > 250 && epss.get(index - 250) > 0) {
+        if (index >= 250 && epss.get(index - 250) > 0 && epss.get(index) > 0) {
             double epsGrowth = (epss.get(index) - epss.get(index - 250)) / epss.get(index - 250);
             double pe = price.get(index) / epss.get(index);
             peg = epsGrowth > 0 ? pe / (epsGrowth * 100) : 2.0;
