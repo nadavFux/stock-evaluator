@@ -1,0 +1,48 @@
+<h2>Section 1: Architecture & DJL Integration</h2>
+<p class="subtitle">Leveraging Deep Java Library (DJL) for high-performance sequence modeling</p>
+
+<div class="section">
+    <h3>Core Components</h3>
+    <div class="grid grid-cols-2 gap-4">
+        <div class="bg-slate-900 p-4 rounded-lg border border-slate-700">
+            <h4 class="text-blue-400 font-bold mb-2">DJL Stack</h4>
+            <ul class="text-sm space-y-1 text-slate-300">
+                <li>• <b>Engine:</b> PyTorch (Native performance)</li>
+                <li>• <b>Model:</b> Sequential Block API</li>
+                <li>• <b>Loss Function:</b> Custom Pinball Loss (for quantiles)</li>
+            </ul>
+        </div>
+        <div class="bg-slate-900 p-4 rounded-lg border border-slate-700">
+            <h4 class="text-purple-400 font-bold mb-2">Layer Stack</h4>
+            <ul class="text-sm space-y-1 text-slate-300">
+                <li>• Input Layer: (N, 30, 12)</li>
+                <li>• LSTM 1: 64 units (return sequences)</li>
+                <li>• LSTM 2: 32 units (final state)</li>
+                <li>• Dense: 3 outputs (Q5, Q50, Q95)</li>
+            </ul>
+        </div>
+    </div>
+</div>
+
+<div class="section">
+    <h3>Why PyTorch Engine?</h3>
+    <p class="text-sm text-slate-400">We will use the PyTorch engine via DJL because it has superior support for recurrent layers (LSTM) and allows for flexible custom loss functions like the Pinball Loss needed for quantile regression.</p>
+</div>
+
+<div class="mockup mt-8">
+    <div class="mockup-header">Pinball Loss Visualization</div>
+    <div class="mockup-body flex justify-center py-8">
+        <svg width="300" height="150" viewBox="0 0 300 150">
+            <!-- Axis -->
+            <line x1="20" y1="130" x2="280" y2="130" stroke="#94a3b8" stroke-width="2"/>
+            <line x1="150" y1="130" x2="150" y2="20" stroke="#94a3b8" stroke-width="1" stroke-dasharray="4"/>
+            <!-- V-Shape -->
+            <polyline points="20,20 150,130 280,40" fill="none" stroke="#3b82f6" stroke-width="3"/>
+            <text x="40" y="50" fill="#3b82f6" font-size="10">Under-estimation</text>
+            <text x="180" y="70" fill="#3b82f6" font-size="10">Over-estimation</text>
+            <text x="135" y="145" fill="#94a3b8" font-size="10">Error = 0</text>
+        </svg>
+    </div>
+</div>
+
+<p class="mt-4">Does this architecture and the choice of DJL/PyTorch look right to you?</p>

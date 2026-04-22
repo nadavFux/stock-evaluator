@@ -20,10 +20,14 @@ import java.util.concurrent.CompletableFuture;
 public class AnalysisService {
     private static final Logger logger = LoggerFactory.getLogger(AnalysisService.class);
     private final SimpMessagingTemplate messagingTemplate;
+    private final StockDataService dataService;
+    private final GraphingService graphingService;
     private boolean isRunning = false;
 
-    public AnalysisService(SimpMessagingTemplate messagingTemplate) {
+    public AnalysisService(SimpMessagingTemplate messagingTemplate, StockDataService dataService, GraphingService graphingService) {
         this.messagingTemplate = messagingTemplate;
+        this.dataService = dataService;
+        this.graphingService = graphingService;
     }
 
     public void runAnalysis(SimulationRangeConfig config) {
@@ -38,28 +42,14 @@ public class AnalysisService {
             
             try {
                 StatsCalculator.init(config);
-                HttpClientService httpClient = new HttpClientService(15);
                 
-                Map<String, String> authHeaders = new HashMap<>();
-                authHeaders.put("api-key", "6a3a617f15f02e5302b849d18123bb5a32b3b0154ad2a3ddf55e7b5f66e39132");
-                authHeaders.put("date-format", "epoch");
-                authHeaders.put("Referer", "https://plus.tase.co.il/");
-
-                StockDataService dataService = new StockDataService(httpClient, 
-                        "https://api.bridgewise.com/v2/scanner?n=4000&gics={code}&last_n_days=1000&raw=true&metadata=true&score=true&price_equity=true&language=he-IL",
-                        "https://apipa.tase.co.il/tr/assets/",
-                        "https://api.bridgewise.com/v2/technical-analysis?identifier={id}&summary=true&language=he-IL&short_name=true",
-                        authHeaders);
-
-                GraphingService graphingService = new GraphingService(httpClient,
-                        "https://app.koyfin.com/api/v1/bfc/tickers/search",
-                        "https://app.koyfin.com/api/v3/data/graph?schema=packed");
-
                 Pipeline pipeline = new Pipeline(dataService, graphingService);
 
                 broadcast("PROGRESS", "Hydrating stocks...");
-                List<StockGraphState> allStocks = pipeline.processSectors(config.sectors, config.exchanges, 50_000_000.0, 
+                double minCap = (config.minMarketCap != null && !config.minMarketCap.isEmpty()) ? config.minMarketCap.get(0) : 50_000_000.0;
+                List<StockGraphState> allStocks = pipeline.processSectors(config.sectors, config.exchanges, minCap,
                         msg -> broadcast("PROGRESS", msg));
+
                 broadcast("STATUS", "Collected data for " + allStocks.size() + " stocks.");
 
                 broadcast("PROGRESS", "Optimizing parameters...");
@@ -75,6 +65,7 @@ public class AnalysisService {
                 broadcast("PROGRESS", "Generating recommendations...");
                 Simulation inferenceSim = new Simulation(bestParams);
                 inferenceSim.setMLService(mlService);
+                StatsCalculator.AddSimulation(inferenceSim);
                 
                 List<StockCheckResult> recommendations = allStocks.stream()
                         .map(stock -> {

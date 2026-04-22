@@ -8,6 +8,7 @@ import com.stock.analyzer.infra.HttpClientService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import com.stock.analyzer.model.SectorPerformance;
 import java.util.List;
 import java.util.Map;
 import java.util.stream.Collectors;
@@ -26,6 +27,27 @@ public class StockDataService {
         this.identifierUrl = identifierUrl;
         this.techUrl = techUrl;
         this.authHeaders = authHeaders;
+    }
+
+    private static final Map<Integer, String> SECTOR_NAMES = Map.ofEntries(
+        Map.entry(10, "Energy"), Map.entry(15, "Materials"), Map.entry(20, "Industrials"),
+        Map.entry(25, "Cons. Disc"), Map.entry(30, "Cons. Staples"), Map.entry(35, "Health Care"),
+        Map.entry(40, "Financials"), Map.entry(45, "Tech"), Map.entry(50, "Comm"),
+        Map.entry(55, "Utilities"), Map.entry(60, "Real Estate")
+    );
+
+    public SectorPerformance calculateSectorPerformance(int sectorId, List<String> exchanges) {
+        List<BaseStock> stocks = fetchAndFilter(sectorId, exchanges, 0.0);
+        if (stocks.isEmpty()) return new SectorPerformance("Unknown", sectorId, 0.0, 0.0, 0);
+
+        // Map final_assessment (0-100) to a centered return proxy (-0.5 to 0.5)
+        double avgScore = stocks.stream().mapToDouble(BaseStock::final_assessment).average().orElse(50.0);
+        double performanceProxy = (avgScore - 50.0) / 100.0;
+        
+        double totalCap = stocks.stream().mapToDouble(BaseStock::market_cap_before_filing_date).sum();
+        String name = SECTOR_NAMES.getOrDefault(sectorId, "Sector " + sectorId);
+
+        return new SectorPerformance(name, sectorId, performanceProxy, totalCap, stocks.size());
     }
 
     public List<BaseStock> fetchAndFilter(int sector, List<String> exchanges, double minCap) {

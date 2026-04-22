@@ -14,13 +14,13 @@ maxPERatios: [25]
 aboveAvgRatingPricePerc: [1.0]
 timeFrameForUpwardShortPrice: [1]
 maxRSI: [100.0]
-minMarketCap: [1300.0]
-maxMarketCap: [2750.0]
+minMarketCap: [50.0]
+maxMarketCap: [2000000.0]
 minRatesOfAvgInc: [1.1]
 minRatings: [3.75]
 maxRatings: [4.6]
 
 # Global Project Settings
-sectors: [101010, 101020, 151010, 151020, 151030, 151040, 151050, 201010]
-exchanges: ["TASE", "NYSE", "NasdaqGS", "NasdaqGM", "NasdaqCM"]
+sectors: [10, 15, 20, 25, 30, 35, 40, 45, 50, 55, 60]
+exchanges: ["TASE", "NYSE", "NasdaqGS", "NasdaqGM", "NasdaqCM", "AMEX"]
 outputPath: "C:/Users/NF/IdeaProjects/stock-analyzer-java/output"

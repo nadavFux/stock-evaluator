@@ -19,50 +19,55 @@ public class Pipeline {
     private final StockDataService dataService;
     private final GraphingService graphingService;
     private final ExecutorService ioExecutor;
-    private final ExecutorService cpuExecutor;
 
     public Pipeline(StockDataService dataService, GraphingService graphingService) {
         this.dataService = dataService;
         this.graphingService = graphingService;
         this.ioExecutor = Executors.newFixedThreadPool(20); // High concurrency for I/O
-        this.cpuExecutor = Executors.newFixedThreadPool(Runtime.getRuntime().availableProcessors());
     }
 
     public List<StockGraphState> processSectors(List<Integer> sectors, List<String> exchanges, double minCap, java.util.function.Consumer<String> progressCallback) {
         logger.info("Starting Parallel Pipeline for {} sectors...", sectors.size());
-        java.util.concurrent.atomic.AtomicInteger completed = new java.util.concurrent.atomic.AtomicInteger(0);
+        java.util.concurrent.atomic.AtomicInteger completedSectors = new java.util.concurrent.atomic.AtomicInteger(0);
+        java.util.concurrent.atomic.AtomicInteger totalStocksFound = new java.util.concurrent.atomic.AtomicInteger(0);
 
         List<CompletableFuture<List<StockGraphState>>> sectorFutures = sectors.stream()
                 .map(sector -> CompletableFuture.supplyAsync(() -> {
-                            logger.info("starting for {}", sector);
+                            if (progressCallback != null) progressCallback.accept("Scanning sector " + sector + "...");
                             List<BaseStock> bases = dataService.fetchAndFilter(sector, exchanges, minCap);
-                            logger.info("fetched for {}", sector);
+                            totalStocksFound.addAndGet(bases.size());
+                            logger.info("Sector {}: Found {} stocks", sector, bases.size());
                             return bases;
                         }, ioExecutor)
                         .thenCompose(bases -> {
+                            if (bases.isEmpty()) return CompletableFuture.completedFuture(java.util.Collections.<StockGraphState>emptyList());
+                            
+                            java.util.concurrent.atomic.AtomicInteger sectorProcessed = new java.util.concurrent.atomic.AtomicInteger(0);
                             List<CompletableFuture<StockGraphState>> stockFutures = bases.stream()
                                     .map(base -> CompletableFuture.supplyAsync(() -> dataService.enrich(base), ioExecutor)
                                             .thenApplyAsync(enriched -> {
                                                 if (enriched == null) return null;
-                                                logger.info("further enrich for {}", enriched.ticker_symbol());
-                                                return graphingService.fetchGraphState(enriched);
+                                                StockGraphState graph = graphingService.fetchGraphState(enriched);
+                                                int count = sectorProcessed.incrementAndGet();
+                                                if (count % 10 == 0 || count == bases.size()) {
+                                                    if (progressCallback != null) progressCallback.accept(String.format("Sector %d: %d/%d stocks hydrated", sector, count, bases.size()));
+                                                }
+                                                return graph;
                                             }, ioExecutor))
                                     .toList();
 
                             return CompletableFuture.allOf(stockFutures.toArray(new CompletableFuture[0]))
-                                    .thenApply(v -> {
-                                        logger.info("finished indicators  for {}", sector);
-                                        return stockFutures.stream()
-                                                .map(CompletableFuture::join)
-                                                .filter(Objects::nonNull)
-                                                .toList();
-                                    });
+                                    .thenApply(v -> stockFutures.stream()
+                                            .map(CompletableFuture::join)
+                                            .filter(Objects::nonNull)
+                                            .toList());
                         })
                         .thenApply(sectorResults -> {
-                            int current = completed.incrementAndGet();
+                            int current = completedSectors.incrementAndGet();
                             if (progressCallback != null) {
                                 int percent = (int) ((current / (double) sectors.size()) * 100);
-                                progressCallback.accept("Hydrating sectors: " + percent + "% (" + current + "/" + sectors.size() + ")");
+                                progressCallback.accept(String.format("Global Progress: %d%% (%d/%d sectors). Total stocks so far: %d", 
+                                        percent, current, sectors.size(), totalStocksFound.get()));
                             }
                             return sectorResults;
                         }))
@@ -78,6 +83,5 @@ public class Pipeline {
 
     public void shutdown() {
         ioExecutor.shutdown();
-        cpuExecutor.shutdown();
     }
 }

@@ -5,6 +5,7 @@ import { Play, Settings, Activity, List, TrendingUp, BarChart3, ChevronRight, Se
 import { BarChart, Bar, XAxis, Tooltip, ResponsiveContainer, Cell } from 'recharts';
 import StockChart from './StockChart';
 import ConfigPanel from './ConfigPanel';
+import SectorHeatmap from './SectorHeatmap';
 
 interface AnalysisUpdate {
     type: 'STATUS' | 'PROGRESS' | 'RESULTS' | 'ERROR' | 'ML_FEATURES';
@@ -28,6 +29,9 @@ const StockDashboard: React.FC = () => {
     const [featureImportance, setFeatureImportance] = useState<any[]>([]);
     const [isRunning, setIsRunning] = useState(false);
     const [selectedStock, setSelectedStock] = useState<any>(null);
+    const [comparisonTickers, setComparisonTickers] = useState<string[]>([]);
+    const [comparisonData, setComparisonData] = useState<any[]>([]);
+    const [compSearch, setCompSearch] = useState('');
     const [showConfig, setShowConfig] = useState(false);
     const [searchTerm, setSearchTerm] = useState('');
     const [profiles, setProfiles] = useState<Profile[]>([]);
@@ -187,6 +191,26 @@ const StockDashboard: React.FC = () => {
         } catch (error) {
             console.error('Failed to save preset', error);
         }
+    };
+
+    const addComparison = async (ticker: string) => {
+        if (!ticker || comparisonTickers.includes(ticker.toUpperCase())) return;
+        try {
+            const res = await fetch(`http://localhost:8080/api/stocks/${ticker.toUpperCase()}/graph`);
+            const data = await res.json();
+            if (data) {
+                setComparisonData(prev => [...prev, data]);
+                setComparisonTickers(prev => [...prev, ticker.toUpperCase()]);
+                setCompSearch('');
+            }
+        } catch (error) {
+            console.error('Failed to add comparison', error);
+        }
+    };
+
+    const removeComparison = (ticker: string) => {
+        setComparisonTickers(prev => prev.filter(t => t !== ticker));
+        setComparisonData(prev => prev.filter(d => d.stock.ticker_symbol !== ticker));
     };
 
     const filteredResults = results.filter(res => 
@@ -416,6 +440,21 @@ const StockDashboard: React.FC = () => {
                         </table>
                     </div>
                 </div>
+
+                {/* Sector Heatmap */}
+                <div className="bg-[#1e293b] rounded-2xl border border-slate-800 shadow-2xl overflow-hidden mb-12">
+                    <div className="px-8 py-6 border-b border-slate-800 flex items-center justify-between bg-slate-900/20">
+                        <div className="flex items-center gap-3">
+                            <div className="p-2 bg-purple-500/10 rounded-lg text-purple-400 shadow-inner">
+                                <BarChart3 size={22} />
+                            </div>
+                            <h2 className="text-xl font-bold text-white tracking-wide">Sector Performance Heatmap</h2>
+                        </div>
+                    </div>
+                    <div className="h-[500px] p-6">
+                        <SectorHeatmap sectors={currentConfig.sectors} exchanges={currentConfig.exchanges} />
+                    </div>
+                </div>
             </main>
 
             {/* Details Modal */}
@@ -456,7 +495,46 @@ const StockDashboard: React.FC = () => {
                             </div>
 
                             <div className="h-[450px] mb-8">
-                                <StockChart data={selectedStock.stock} markers={selectedStock.tradePoints} />
+                                <StockChart 
+                                    data={selectedStock.stock} 
+                                    markers={selectedStock.tradePoints} 
+                                    comparisonData={comparisonData}
+                                />
+                            </div>
+
+                            <div className="mb-10">
+                                <div className="flex items-center justify-between mb-4">
+                                    <h3 className="text-xl font-bold text-white">Performance Comparison</h3>
+                                    <div className="relative">
+                                        <input 
+                                            type="text" 
+                                            placeholder="Compare with (e.g. SPY)..." 
+                                            value={compSearch}
+                                            onChange={(e) => setCompSearch(e.target.value)}
+                                            onKeyDown={(e) => e.key === 'Enter' && addComparison(compSearch)}
+                                            className="bg-slate-900 border border-slate-700 rounded-lg pl-4 pr-10 py-2 text-sm focus:outline-none focus:border-blue-500 w-64"
+                                        />
+                                        <button 
+                                            onClick={() => addComparison(compSearch)}
+                                            className="absolute right-2 top-1/2 -translate-y-1/2 p-1 text-blue-400 hover:text-blue-300"
+                                        >
+                                            <TrendingUp size={18} />
+                                        </button>
+                                    </div>
+                                </div>
+                                <div className="flex flex-wrap gap-3">
+                                    <div className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 text-xs font-bold">
+                                        {selectedStock.stock.stock.ticker_symbol} (Main)
+                                    </div>
+                                    {comparisonTickers.map(ticker => (
+                                        <div key={ticker} className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-blue-500/10 text-blue-400 border border-blue-500/20 text-xs font-bold">
+                                            {ticker}
+                                            <button onClick={() => removeComparison(ticker)} className="hover:text-white transition-colors">
+                                                <X size={14} />
+                                            </button>
+                                        </div>
+                                    ))}
+                                </div>
                             </div>
 
                             <div className="bg-slate-900/50 p-8 rounded-2xl border border-slate-800">

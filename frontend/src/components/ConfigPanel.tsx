@@ -121,6 +121,17 @@ const RangeInput = ({ label, values, onChange, step = 1, min = 0 }: { label: str
 };
 
 const GICS_INDUSTRIES = [
+    { code: 10, name: 'Energy (Broad)', sector: 'Energy' },
+    { code: 15, name: 'Materials (Broad)', sector: 'Materials' },
+    { code: 20, name: 'Industrials (Broad)', sector: 'Industrials' },
+    { code: 25, name: 'Consumer Discretionary (Broad)', sector: 'Consumer Discretionary' },
+    { code: 30, name: 'Consumer Staples (Broad)', sector: 'Consumer Staples' },
+    { code: 35, name: 'Health Care (Broad)', sector: 'Health Care' },
+    { code: 40, name: 'Financials (Broad)', sector: 'Financials' },
+    { code: 45, name: 'Information Technology (Broad)', sector: 'Information Technology' },
+    { code: 50, name: 'Communication Services (Broad)', sector: 'Communication Services' },
+    { code: 55, name: 'Utilities (Broad)', sector: 'Utilities' },
+    { code: 60, name: 'Real Estate (Broad)', sector: 'Real Estate' },
     { code: 101010, name: 'Energy Equipment & Services', sector: 'Energy' },
     { code: 101020, name: 'Oil, Gas & Consumable Fuels', sector: 'Energy' },
     { code: 151010, name: 'Chemicals', sector: 'Materials' },

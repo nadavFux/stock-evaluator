@@ -1,0 +1,50 @@
+<h2>Section 3: Model Training & Validation</h2>
+<p class="subtitle">30-Day Forward Forecasting Strategy</p>
+
+<div class="section">
+    <h3>Forecasting Horizon: 30 Trading Days</h3>
+    <p class="text-sm text-slate-400 mb-4">The model is now configured to predict the price target exactly 30 trading days into the future. This longer horizon captures medium-term trends rather than short-term noise.</p>
+    
+    <div class="pros-cons">
+        <div class="pros">
+            <h4>Pros</h4>
+            <ul>
+                <li>Captures multi-week trend momentum</li>
+                <li>Less susceptible to daily volatility</li>
+                <li>Aligned with monthly investment cycles</li>
+            </ul>
+        </div>
+        <div class="cons">
+            <h4>Cons</h4>
+            <ul>
+                <li>Greater uncertainty (wider confidence bands)</li>
+                <li>Requires longer look-ahead for training labels</li>
+            </ul>
+        </div>
+    </div>
+</div>
+
+<div class="section">
+    <h3>Training Strategy</h3>
+    <div class="cards">
+      <div class="card">
+        <div class="card-body">
+          <h3>Walk-Forward Validation</h3>
+          <p class="text-xs">Train on data up to Year X, validate on Year X+1. This prevents "look-ahead bias" where the model accidentally learns from future data.</p>
+        </div>
+      </div>
+      <div class="card">
+        <div class="card-body">
+          <h3>Early Stopping</h3>
+          <p class="text-xs">Monitor validation loss (Pinball Loss). Stop training when the model stops improving on unseen data to prevent overfitting.</p>
+        </div>
+      </div>
+    </div>
+</div>
+
+<div class="section">
+    <h3>Model Persistence</h3>
+    <p class="text-sm text-slate-400">Models will be saved as <code>.pt</code> (PyTorch) files. The <code>MLModelService</code> will handle automatic reloading of the weights during the <i>Inference</i> phase of the pipeline.</p>
+</div>
+
+<p class="mt-4">The target is set to **30 days**. Does this training and validation strategy look correct to you?</p>
