@@ -438,16 +438,20 @@ const StockDashboard: React.FC = () => {
 
                             <div className="grid grid-cols-3 gap-6 mb-10">
                                 <div className="bg-[#0f172a] p-6 rounded-2xl border border-slate-800">
-                                    <p className="text-slate-500 text-xs font-bold uppercase mb-2 tracking-widest">AI Prediction</p>
-                                    <p className="text-3xl font-bold text-emerald-400">+{(selectedStock.result.aiPredictedReturn * 100).toFixed(2)}%</p>
+                                    <p className="text-slate-500 text-xs font-bold uppercase mb-2 tracking-widest">30-Day Forecast</p>
+                                    <p className="text-3xl font-bold text-emerald-400">
+                                        {(selectedStock.result.q50 * 100).toFixed(2)}%
+                                    </p>
+                                </div>
+                                <div className="bg-[#0f172a] p-6 rounded-2xl border border-slate-800">
+                                    <p className="text-slate-500 text-xs font-bold uppercase mb-2 tracking-widest">Confidence Interval (90%)</p>
+                                    <p className="text-xl font-bold text-slate-300">
+                                        {(selectedStock.result.q05 * 100).toFixed(1)}% to {(selectedStock.result.q95 * 100).toFixed(1)}%
+                                    </p>
                                 </div>
                                 <div className="bg-[#0f172a] p-6 rounded-2xl border border-slate-800">
                                     <p className="text-slate-500 text-xs font-bold uppercase mb-2 tracking-widest">Technical Score</p>
                                     <p className="text-3xl font-bold text-blue-400">{selectedStock.result.heuristicScore.toFixed(2)}</p>
-                                </div>
-                                <div className="bg-[#0f172a] p-6 rounded-2xl border border-slate-800">
-                                    <p className="text-slate-500 text-xs font-bold uppercase mb-2 tracking-widest">Market Cap</p>
-                                    <p className="text-3xl font-bold text-white">{(selectedStock.stock.stock.market_cap_before_filing_date / 1000).toFixed(1)}B</p>
                                 </div>
                             </div>
 
