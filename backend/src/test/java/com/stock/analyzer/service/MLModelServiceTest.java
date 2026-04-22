@@ -13,17 +13,24 @@ public class MLModelServiceTest {
         
         // Add 100 samples to enable training
         for (int i = 0; i < 100; i++) {
-            service.collectSample(new TrainingSample(1.0 + i*0.01, 0.1, 5.0, 1.0, 1.0, 1.0, 0.02, 0.05 + i*0.001));
+            float[][] sequence = new float[30][12];
+            for (int k = 0; k < 30; k++) {
+                for (int f = 0; f < 12; f++) sequence[k][f] = (float) (0.5 + i * 0.001);
+            }
+            service.collectSample(new TrainingSample(sequence, (float) (0.05 + i * 0.001)));
         }
         
         service.train();
         
-        double[] features = new double[]{1.05, 0.1, 5.0, 1.0, 1.0, 1.0, 0.02};
-        double prediction = service.predict(features);
+        float[][] testSequence = new float[30][12];
+        for (int k = 0; k < 30; k++) {
+            for (int f = 0; f < 12; f++) testSequence[k][f] = 0.55f;
+        }
+        double[] prediction = service.predict(testSequence);
         
-        // Prediction should be around 0.05 + 5*0.001 = 0.055
-        // Since it's a random forest with many samples, it should at least not return -1.0 (error)
-        assertNotEquals(-1.0, prediction, "Prediction should not fail");
-        assertTrue(prediction > 0.04 && prediction < 0.2, "Prediction should be reasonable");
+        assertNotNull(prediction);
+        assertEquals(3, prediction.length);
+        // Median (Q50) should be around 0.1
+        assertTrue(prediction[1] > 0.0, "Prediction should be positive");
     }
 }

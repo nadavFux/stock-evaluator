@@ -101,7 +101,7 @@ public class ParamOptimizer {
                         count++;
 
                         // Pruning check using the actual current simulation score
-                        if (!collectMLData && count >= 15 && (simulation.calculateSimulationScore() < -30.0)) return -100.0;
+                        if (!collectMLData && count >= 15 && (simulation.calculateSimulationScore() < -50.0)) return -100.0;
                     }
                 }
             }
@@ -122,6 +122,31 @@ public class ParamOptimizer {
                 if (buyMA == 0) continue;
                 double cutOff = (buyPrice / buyMA) * sim.params.sellCutOffPerc();
 
+                // Collection for ML
+                if (ml && i >= timeStart + 30 && i + 30 < pkg.daysCount) {
+                    float[][] sequence = new float[30][12];
+                    for (int k = 0; k < 30; k++) {
+                        int dayOffset = i - 29 + k;
+                        double[] features = sim.extractFeatures(
+                            java.util.Arrays.stream(pkg.closePrices[sIdx]).boxed().toList(),
+                            java.util.Arrays.asList(new Double[pkg.daysCount]), // Placeholder
+                            dayOffset,
+                            new Stock(pkg.tickers[sIdx], "name", pkg.tickers[sIdx], "exchange", "date", 0.0f, 0.0, 0.0, "id", "other", 0.0),
+                            java.util.Arrays.stream(pkg.epss[sIdx]).boxed().toList(),
+                            java.util.Arrays.stream(pkg.ratings[sIdx]).boxed().toList(),
+                            java.util.Arrays.stream(pkg.caps[sIdx]).boxed().toList(),
+                            java.util.Arrays.stream(pkg.volumes[sIdx]).boxed().toList()
+                        );
+                        if (features != null) {
+                            for (int f = 0; f < 12; f++) sequence[k][f] = (float) features[f];
+                        }
+                    }
+
+                    double priceIn30Days = pkg.closePrices[sIdx][i + 30];
+                    float gain30d = (float) ((priceIn30Days - buyPrice) / buyPrice);
+                    mlService.collectSample(new TrainingSample(sequence, gain30d));
+                }
+
                 for (int j = 1; j < searchLimit - i; j++) {
                     double currentPrice = pkg.closePrices[sIdx][i + j];
                     double currentMA = pkg.getAvg(sIdx, i + j, sim.params.longMovingAvgTime());
@@ -131,10 +156,7 @@ public class ParamOptimizer {
                         double gain = (exitPrice - buyPrice) / buyPrice;
                         tf.AddRow(new StockTrade(pkg.tickers[sIdx], gain, daysBack - i + timeStart, j, buyPrice / buyMA, pkg.caps[sIdx][i], pkg.dates[sIdx][i]));
 
-                        if (ml && res.features() != null) {
-                            mlService.collectSample(new TrainingSample(res.features()[0], res.features()[1], res.features()[2], res.features()[3], res.features()[4], res.features()[5], res.features()[6], gain));
-                        }
-                        i += j;
+                        i += (j - 1);
                         break;
                     }
                 }
