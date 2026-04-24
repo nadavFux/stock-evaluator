@@ -12,6 +12,9 @@ import com.stock.analyzer.model.StocksSearchRequestBody;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import com.stock.analyzer.infra.StockCacheRepository;
+import com.stock.analyzer.model.StockCacheEntity;
+import java.time.LocalDate;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
@@ -22,18 +25,35 @@ public class GraphingService {
     private final HttpClientService httpClient;
     private final String searchUrl;
     private final String graphUrl;
+    private final StockCacheRepository cacheRepository;
     private final Gson gson = new Gson();
 
-    public GraphingService(HttpClientService httpClient, String searchUrl, String graphUrl) {
+    public GraphingService(HttpClientService httpClient, String searchUrl, String graphUrl, StockCacheRepository cacheRepository) {
         this.httpClient = httpClient;
         this.searchUrl = searchUrl;
         this.graphUrl = graphUrl;
+        this.cacheRepository = cacheRepository;
     }
 
     public StockGraphState fetchGraphState(Stock stock) {
+        String ticker = stock.ticker_symbol();
+        
+        // Cache Check
+        var cached = cacheRepository.findById(ticker);
+        if (cached.isPresent() && cached.get().getLastUpdated().equals(LocalDate.now())) {
+            try {
+                StockGraphState state = gson.fromJson(cached.get().getGraphDataJson(), StockGraphState.class);
+                if (state != null && state.closePrices() != null && !state.closePrices().isEmpty()) {
+                    return state;
+                }
+            } catch (Exception e) {
+                logger.warn("Failed to deserialize graph cache for {}, fetching fresh.", ticker);
+            }
+        }
+
         try {
             // 1. Search for KID
-            logger.info("starting fetch for {}", stock.ticker_symbol());
+            logger.info("starting fetch for {}", ticker);
             var searchBody = gson.toJson(new StocksSearchRequestBody(stock.ticker_symbol()));
             String searchResponse = httpClient.post(searchUrl, searchBody, null).join();
             if (searchResponse == null) return null;
@@ -69,10 +89,13 @@ public class GraphingService {
                 logger.info("No indicator data for {} {}", stock.ticker_symbol(), stock.name());
                 return null;
             }
-            logger.info("finished fetch for {}", stock.ticker_symbol());
-            return new StockGraphState(stock,
+            logger.info("finished fetch for {}", ticker);
+            StockGraphState result = new StockGraphState(stock,
                     tail(ratings, size), 0.0, 0.0, close.get(close.size() - 1),
                     tail(close, size), tail(volume, size), tail(avgs, size), tail(dates, size), tail(epss, size), tail(caps, size));
+
+            cacheRepository.save(new StockCacheEntity(ticker, LocalDate.now(), gson.toJson(result)));
+            return result;
 
         } catch (Exception e) {
             logger.error("Failed to fetch graph for {}: {}", stock.ticker_symbol(), e.getMessage());

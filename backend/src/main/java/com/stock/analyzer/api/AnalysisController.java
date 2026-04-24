@@ -7,6 +7,9 @@ import org.springframework.web.bind.annotation.*;
 
 import java.util.Map;
 
+import com.stock.analyzer.model.SimulationParams;
+import com.google.gson.Gson;
+
 @RestController
 @RequestMapping("/api/analysis")
 @CrossOrigin(origins = "*")
@@ -18,10 +21,21 @@ public class AnalysisController {
     }
 
     @PostMapping("/run")
-    public Map<String, String> run(@RequestBody @Valid SimulationRangeConfig config) {
+    public Map<String, String> runAnalysis(@RequestBody @Valid SimulationRangeConfig config) {
         analysisService.runAnalysis(config);
-        return Map.of("message", "Analysis started");
+        return Map.of("status", "Analysis started");
     }
+
+    @PostMapping("/backtest")
+    public Map<String, String> runBacktest(@RequestBody SimulationRangeConfig config) {
+        try {
+            analysisService.runBacktest(config);
+            return Map.of("status", "Backtest started");
+        } catch (Exception e) {
+            return Map.of("error", e.getMessage());
+        }
+    }
+
 
     @GetMapping("/status")
     public Map<String, Object> status() {

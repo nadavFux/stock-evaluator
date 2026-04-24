@@ -17,7 +17,7 @@ public class ServiceConfig {
     }
 
     @Bean
-    public StockDataService stockDataService(HttpClientService httpClientService) {
+    public StockDataService stockDataService(HttpClientService httpClientService, com.stock.analyzer.infra.StockCacheRepository cacheRepository) {
         Map<String, String> authHeaders = new HashMap<>();
         authHeaders.put("api-key", "6a3a617f15f02e5302b849d18123bb5a32b3b0154ad2a3ddf55e7b5f66e39132");
         authHeaders.put("date-format", "epoch");
@@ -27,13 +27,15 @@ public class ServiceConfig {
                 "https://api.bridgewise.com/v2/scanner?n=4000&gics={code}&last_n_days=1000&raw=true&metadata=true&score=true&price_equity=true&language=he-IL",
                 "https://apipa.tase.co.il/tr/assets/",
                 "https://api.bridgewise.com/v2/technical-analysis?identifier={id}&summary=true&language=he-IL&short_name=true",
-                authHeaders);
+                authHeaders,
+                cacheRepository);
     }
 
     @Bean
-    public GraphingService graphingService(HttpClientService httpClientService) {
+    public GraphingService graphingService(HttpClientService httpClientService, com.stock.analyzer.infra.StockCacheRepository cacheRepository) {
         return new GraphingService(httpClientService,
                 "https://app.koyfin.com/api/v1/bfc/tickers/search",
-                "https://app.koyfin.com/api/v3/data/graph?schema=packed");
+                "https://app.koyfin.com/api/v3/data/graph?schema=packed",
+                cacheRepository);
     }
 }
