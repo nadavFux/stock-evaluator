@@ -151,6 +151,33 @@ public class MLModelService {
         );
     }
 
+    public void saveModel(String dirPath) {
+        try {
+            java.nio.file.Path modelDir = Paths.get(dirPath);
+            if (!Files.exists(modelDir)) {
+                Files.createDirectories(modelDir);
+            }
+            model.save(modelDir, "stock-lstm");
+            logger.info("ML Model saved successfully to {}", dirPath);
+        } catch (IOException e) {
+            logger.error("Failed to save ML model", e);
+        }
+    }
+
+    public void loadModel(String dirPath) {
+        try {
+            java.nio.file.Path modelDir = Paths.get(dirPath);
+            if (Files.exists(modelDir.resolve("stock-lstm-0000.params"))) { // DJL default suffix
+                model.load(modelDir, "stock-lstm");
+                logger.info("ML Model loaded successfully from {}", dirPath);
+            } else {
+                logger.warn("No model found at {}, keeping default initialized model", dirPath);
+            }
+        } catch (Exception e) {
+            logger.error("Failed to load ML model from {}", dirPath, e);
+        }
+    }
+
     public void saveSamples(String path) {
         logger.info("Saving {} samples to {}", sequences.size(), path);
         // Persistence logic can be expanded here

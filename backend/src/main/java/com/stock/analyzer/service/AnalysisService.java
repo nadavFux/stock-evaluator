@@ -1,9 +1,11 @@
 package com.stock.analyzer.service;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.dataformat.yaml.YAMLFactory;
 import com.stock.analyzer.core.Pipeline;
 import com.stock.analyzer.core.Simulation;
 import com.stock.analyzer.core.StatsCalculator;
-import com.stock.analyzer.infra.HttpClientService;
+import com.stock.analyzer.infra.StockCacheRepository;
 import com.stock.analyzer.model.*;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -11,17 +13,8 @@ import org.springframework.messaging.simp.SimpMessagingTemplate;
 import org.springframework.stereotype.Service;
 
 import java.io.File;
-import java.io.FileWriter;
-import java.io.IOException;
 import java.util.*;
 import java.util.concurrent.CompletableFuture;
-
-import com.stock.analyzer.infra.StockCacheRepository;
-import com.stock.analyzer.model.StockCacheEntity;
-import com.stock.analyzer.model.StockTrade;
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.dataformat.yaml.YAMLFactory;
-import java.util.ArrayList;
 
 @Service
 public class AnalysisService {
@@ -49,10 +42,10 @@ public class AnalysisService {
         CompletableFuture.runAsync(() -> {
             isRunning = true;
             broadcast("STATUS", "Starting analysis...");
-            
+
             try {
                 StatsCalculator.init(config);
-                
+
                 Pipeline pipeline = new Pipeline(dataService, graphingService);
 
                 broadcast("PROGRESS", "Hydrating stocks...");
@@ -78,22 +71,24 @@ public class AnalysisService {
                 broadcast("PROGRESS", "Training AI model...");
                 MLModelService mlService = optimizer.getMlService();
                 mlService.train();
+                mlService.saveModel(config.outputPath + File.separator + "model");
                 mlService.saveSamples(config.outputPath + File.separator + "training_samples.csv");
                 broadcast("ML_FEATURES", mlService.getFeatureImportance());
 
                 broadcast("PROGRESS", "Generating recommendations...");
+                MLModelService trainedML = mlService; 
                 Simulation inferenceSim = new Simulation(bestParams);
-                inferenceSim.setMLService(mlService);
+                inferenceSim.setMLService(trainedML);
                 StatsCalculator.AddSimulation(inferenceSim);
-                
+
                 List<StockCheckResult> recommendations = allStocks.stream()
                         .map(stock -> {
                             List<Double> movingAvg = StatsCalculator.MovingAvg(stock, bestParams.longMovingAvgTime());
-                            SimulationResult res = inferenceSim.calculateDualScore(stock.closePrices(), movingAvg, stock.closePrices().size() - 1, stock.stock(), stock.epss(), stock.rating(), stock.caps(), stock.volumes());
+                            SimulationResult res = inferenceSim.calculateParamScore(stock.closePrices(), movingAvg, stock.closePrices().size() - 1, stock.stock(), stock.epss(), stock.rating(), stock.caps(), stock.volumes());
                             
                             List<TradePoint> tradePoints = new ArrayList<>();
                             if (res.heuristicScore() > 0.65) {
-                                tradePoints.add(new TradePoint(stock.dates().get(stock.dates().size()-1), stock.closePrices().get(stock.closePrices().size()-1), "BUY"));
+                                tradePoints.add(new TradePoint(stock.dates().get(stock.dates().size() - 1), stock.closePrices().get(stock.closePrices().size() - 1), "BUY"));
                             }
 
                             if (res.heuristicScore() > 0.6 || res.aiPredictedReturn() > 0.02) {
@@ -139,13 +134,16 @@ public class AnalysisService {
                 StatsCalculator.init(config);
                 Pipeline pipeline = new Pipeline(dataService, graphingService);
 
-                List<StockGraphState> allStocks = pipeline.processSectors(config.sectors, config.exchanges, 
+                List<StockGraphState> allStocks = pipeline.processSectors(config.sectors, config.exchanges,
                         (config.minMarketCap != null && !config.minMarketCap.isEmpty()) ? config.minMarketCap.get(0) : 50_000_000.0,
                         msg -> broadcast("PROGRESS", msg));
 
                 broadcast("STATUS", "Simulating historical trades...");
 
+                MLModelService mlService = getTrainedMLService(config);
                 Simulation sim = new Simulation(params);
+                sim.setMLService(mlService);
+                
                 List<StockTrade> allTrades = new ArrayList<>();
                 int daysToBacktest = 100;
 
@@ -180,10 +178,10 @@ public class AnalysisService {
                 double avgGain = allTrades.isEmpty() ? 0 : totalGain / allTrades.size();
 
                 Map<String, Object> report = Map.of(
-                    "totalTrades", allTrades.size(),
-                    "totalGain", String.format("%.2f%%", totalGain),
-                    "avgGain", String.format("%.2f%%", avgGain),
-                    "trades", allTrades.stream().sorted((a,b) -> b.getTicker().compareTo(a.getTicker())).limit(50).toList()
+                        "totalTrades", allTrades.size(),
+                        "totalGain", String.format("%.2f%%", totalGain),
+                        "avgGain", String.format("%.2f%%", avgGain),
+                        "trades", allTrades.stream().sorted((a, b) -> b.getTicker().compareTo(a.getTicker())).limit(50).toList()
                 );
 
                 broadcast("BACKTEST_REPORT", report);
@@ -196,6 +194,76 @@ public class AnalysisService {
                 isRunning = false;
             }
         });
+    }
+
+    public void runOpportunities(SimulationRangeConfig config) {
+        if (isRunning) return;
+
+        CompletableFuture.runAsync(() -> {
+            isRunning = true;
+            broadcast("STATUS", "Starting searching for opportunities...");
+
+            try {
+                // Load best params from file
+                File paramsFile = new File(config.outputPath + File.separator + "best_params.yaml");
+                if (!paramsFile.exists()) {
+                    throw new RuntimeException("best_params.yaml not found in " + config.outputPath + ". Run analysis first.");
+                }
+                ObjectMapper mapper = new ObjectMapper(new YAMLFactory());
+                SimulationParams params = mapper.readValue(paramsFile, SimulationParams.class);
+                logger.info("Loaded parameters from {} for backtest", paramsFile.getAbsolutePath());
+
+                StatsCalculator.init(config);
+                Pipeline pipeline = new Pipeline(dataService, graphingService);
+
+                List<StockGraphState> allStocks = pipeline.processSectors(config.sectors, config.exchanges,
+                        (config.minMarketCap != null && !config.minMarketCap.isEmpty()) ? config.minMarketCap.get(0) : 50_000_000.0,
+                        msg -> broadcast("PROGRESS", msg));
+
+                broadcast("PROGRESS", "Generating recommendations...");
+                MLModelService mlService = getTrainedMLService(config);
+                Simulation inferenceSim = new Simulation(params);
+                inferenceSim.setMLService(mlService);
+                
+                StatsCalculator.AddSimulation(inferenceSim);
+
+                List<StockCheckResult> recommendations = allStocks.stream()
+                        .map(stock -> {
+                            List<Double> movingAvg = StatsCalculator.MovingAvg(stock, params.longMovingAvgTime());
+                            SimulationResult res = inferenceSim.calculateParamScore(stock.closePrices(), movingAvg, stock.closePrices().size() - 1, stock.stock(), stock.epss(), stock.rating(), stock.caps(), stock.volumes());
+
+                            List<TradePoint> tradePoints = new ArrayList<>();
+                            if (res.heuristicScore() > 0.65) {
+                                tradePoints.add(new TradePoint(stock.dates().get(stock.dates().size() - 1), stock.closePrices().get(stock.closePrices().size() - 1), "BUY"));
+                            }
+
+                            if (res.heuristicScore() > 0.6 || res.aiPredictedReturn() > 0.02) {
+                                return new StockCheckResult(stock, res, tradePoints);
+                            }
+                            return null;
+                        })
+                        .filter(Objects::nonNull)
+                        .sorted((a, b) -> Double.compare(b.result().heuristicScore(), a.result().heuristicScore()))
+                        .limit(100)
+                        .toList();
+
+                broadcast("RESULTS", recommendations);
+                StatsCalculator.WriteStat();
+                broadcast("STATUS", "Analysis finished successfully.");
+
+            } catch (Exception e) {
+                logger.error("Backtest failed", e);
+                broadcast("ERROR", "Backtest failed: " + e.getMessage());
+            } finally {
+                isRunning = false;
+            }
+        });
+    }
+
+    private MLModelService getTrainedMLService(SimulationRangeConfig config) {
+        MLModelService service = new MLModelService();
+        service.loadModel(config.outputPath + File.separator + "model");
+        return service;
     }
 
     private void broadcast(String type, Object payload) {

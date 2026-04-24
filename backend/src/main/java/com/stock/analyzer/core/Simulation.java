@@ -9,10 +9,8 @@ import com.stock.analyzer.model.StockTrade;
 import com.stock.analyzer.service.MLModelService;
 
 import java.util.ArrayList;
-import java.util.Comparator;
 import java.util.HashMap;
 import java.util.List;
-import java.util.Objects;
 
 public class Simulation {
     public final HashMap<String, StocksTradeTimeFrame> timeFrames;
@@ -40,7 +38,7 @@ public class Simulation {
                p.minRateOfAvgInc() + "," + p.maxPERatio() + "," + p.minRating() + "," + p.maxRating() + "," + p.maxMarketCap() + "," + p.riskFreeRate();
     }
 
-    public SimulationResult calculateDualScore(List<Double> price, List<Double> movingAvg, int index, Stock stock, List<Double> epss, List<Double> rating, List<Double> caps, List<Double> volumes) {
+    public SimulationResult calculateParamScore(List<Double> price, List<Double> movingAvg, int index, Stock stock, List<Double> epss, List<Double> rating, List<Double> caps, List<Double> volumes) {
         double[] features = extractFeatures(price, movingAvg, index, stock, epss, rating, caps, volumes);
         if (features == null) return new SimulationResult(0.0, -1.0, 0.0, 0.0, 0.0, null);
 
@@ -86,65 +84,91 @@ public class Simulation {
     }
 
     public SimulationResult calculateFastScore(SimulationDataPackage pkg, int stockIdx, int dayIdx) {
-        if (shouldSkipEvaluation(pkg, stockIdx, dayIdx)) {
-            return new SimulationResult(0.0, -1.0, 0, 0, 0, null);
-        }
-
-        double currentPrice = pkg.closePrices[stockIdx][dayIdx];
-        double currentMA = pkg.getAvg(stockIdx, dayIdx, params.longMovingAvgTime());
-        if (currentMA == 0) {
-            if (!isTest) return new SimulationResult(0.0, -1.0, 0, 0, 0, null);
-            currentMA = currentPrice; // Test fallback
-        }
+        double heuristic = getFastHeuristic(pkg, stockIdx, dayIdx);
+        if (heuristic == 0.0) return new SimulationResult(0.0, -1.0, 0, 0, 0, null);
 
         double[] features = extractFeaturesFast(pkg, stockIdx, dayIdx);
-        double heuristic = calculateHeuristic(features, currentMA, currentPrice);
-
         return new SimulationResult(heuristic, -1.0, features[4], features[6], features[3], features);
+    }
+
+    public double getFastHeuristic(SimulationDataPackage pkg, int stockIdx, int dayIdx) {
+        if (shouldSkipEvaluation(pkg, stockIdx, dayIdx)) return 0.0;
+
+        double maVal = pkg.getAvg(stockIdx, dayIdx, params.longMovingAvgTime());
+        if (maVal == 0) {
+            if (isTest) maVal = pkg.closePrices[stockIdx][dayIdx]; else return 0.0;
+        }
+
+        double maGap = pkg.closePrices[stockIdx][dayIdx] / maVal;
+        double maMax = params.higherPriceToLongAvgBuyIn();
+        if (pkg.ratings[stockIdx][dayIdx] > 4.0) maMax *= params.aboveAvgRatingPricePerc();
+        
+        double maScore = 1.0 - normalize(maGap, params.lowerPriceToLongAvgBuyIn(), maMax);
+        double scoreSoFar = maScore * weights.movingAvgGapWeight();
+        double remainingWeight = 1.0 - weights.movingAvgGapWeight();
+
+        if (scoreSoFar + remainingWeight < 0.65) return 0.0;
+
+        double currentRating = pkg.ratings[stockIdx][dayIdx];
+        double ratingScore = normalize(currentRating, params.minRating(), params.maxRating());
+        scoreSoFar += ratingScore * weights.ratingWeight();
+        remainingWeight -= weights.ratingWeight();
+        if (scoreSoFar + remainingWeight < 0.65) return 0.0;
+
+        double rvol = (pkg.avgVol30d[stockIdx][dayIdx] > 0) ? pkg.volumes[stockIdx][dayIdx] / pkg.avgVol30d[stockIdx][dayIdx] : 1.0;
+        double rvolScore = normalize(rvol, 0.5, 2.0);
+        scoreSoFar += rvolScore * weights.rvolWeight();
+        remainingWeight -= weights.rvolWeight();
+        if (scoreSoFar + remainingWeight < 0.65) return 0.0;
+
+        double distFromMA = Math.abs(maGap - 1.0);
+        double reversionScore = normalize(distFromMA, 0.0, 0.20);
+        scoreSoFar += reversionScore * weights.reversionToMeanWeight();
+        remainingWeight -= weights.reversionToMeanWeight();
+        if (scoreSoFar + remainingWeight < 0.65) return 0.0;
+
+        double avgNow = pkg.getAvg(stockIdx, dayIdx, params.timeFrameForUpwardLongAvg());
+        double avgPrev = pkg.getAvg(stockIdx, Math.max(0, dayIdx - params.timeFrameForUpwardLongAvg()), params.timeFrameForUpwardLongAvg());
+        double momentum = avgPrev > 0 ? avgNow / avgPrev : 1.0;
+        double momentumScore = normalize(momentum, params.minRateOfAvgInc(), params.minRateOfAvgInc() * 1.3);
+        scoreSoFar += momentumScore * weights.upwardIncRateWeight();
+        remainingWeight -= weights.upwardIncRateWeight();
+        if (scoreSoFar + remainingWeight < 0.65) return 0.0;
+
+        double peg = 1.0;
+        int epsPrevIdx = dayIdx - 250;
+        if (epsPrevIdx >= pkg.offsets[stockIdx] && pkg.epss[stockIdx][epsPrevIdx] > 0 && pkg.epss[stockIdx][dayIdx] > 0) {
+            double epsGrowth = (pkg.epss[stockIdx][dayIdx] - pkg.epss[stockIdx][epsPrevIdx]) / pkg.epss[stockIdx][epsPrevIdx];
+            double pe = pkg.closePrices[stockIdx][dayIdx] / pkg.epss[stockIdx][dayIdx];
+            peg = epsGrowth > 0 ? pe / (epsGrowth * 100) : 2.0;
+        }
+        double pegScore = 1.0 - normalize(peg, 0.0, 2.0);
+        scoreSoFar += pegScore * weights.pegWeight();
+        remainingWeight -= weights.pegWeight();
+        if (scoreSoFar + remainingWeight < 0.65) return 0.0;
+
+        double volatility = pkg.getVolatility(stockIdx, dayIdx, 20);
+        double volScore = 1.0 - normalize(volatility, 0.0, 0.05);
+        scoreSoFar += volScore * weights.volatilityCompressionWeight();
+
+        return scoreSoFar;
     }
 
     private boolean shouldSkipEvaluation(SimulationDataPackage pkg, int stockIdx, int dayIdx) {
         if (isTest) return false;
-
-        // 1. Lookback window check
         if (dayIdx - pkg.offsets[stockIdx] < params.longMovingAvgTime() - 1) return true;
 
-        // 2. Market Cap constraints
         double cap = pkg.caps[stockIdx][dayIdx];
         if (cap > 0 && (cap < params.minMarketCap() || cap > params.maxMarketCap())) return true;
 
-        // 3. RSI Overbought check
         if (pkg.rsi[stockIdx][dayIdx] > params.maxRSI()) return true;
 
-        // 4. Short-term trend check (don't buy falling knives)
         int shortLookback = params.timeFrameForUpwardShortPrice();
         if (dayIdx >= pkg.offsets[stockIdx] + shortLookback) {
              if (pkg.closePrices[stockIdx][dayIdx] < pkg.closePrices[stockIdx][dayIdx - shortLookback] * 0.8) return true;
         }
 
         return false;
-    }
-
-    private double calculateHeuristic(double[] f, double currentMA, double currentPrice) {
-        // Feature mapping: 0:maGap, 1:distFromMA, 2:rating, 3:momentum, 4:rvol, 5:peg, 6:volat
-        double maMax = params.higherPriceToLongAvgBuyIn();
-        if (f[2] > 4.0) maMax *= params.aboveAvgRatingPricePerc();
-
-        double sMa = 1.0 - normalize(f[0], params.lowerPriceToLongAvgBuyIn(), maMax);
-        double sRev = normalize(f[1], 0.0, 0.20);
-        double sRat = normalize(f[2], params.minRating(), params.maxRating());
-        double sMom = normalize(f[3], params.minRateOfAvgInc(), params.minRateOfAvgInc() * 1.3);
-        double sRvol = normalize(f[4], 0.5, 2.0);
-        double sPeg = 1.0 - normalize(f[5], 0.0, 2.0);
-        double sVol = 1.0 - normalize(f[6], 0.0, 0.05);
-
-        return (sMa * weights.movingAvgGapWeight()) +
-               (sRev * weights.reversionToMeanWeight()) +
-               (sRat * weights.ratingWeight()) +
-               (sMom * weights.upwardIncRateWeight()) +
-               (sRvol * weights.rvolWeight()) +
-               (sPeg * weights.pegWeight()) +
-               (sVol * weights.volatilityCompressionWeight());
     }
 
     public double[] extractFeaturesFast(SimulationDataPackage pkg, int stockIdx, int dayIdx) {
@@ -181,18 +205,17 @@ public class Simulation {
     }
 
     public double[] extractFeatures(List<Double> price, List<Double> movingAvg, int index, Stock stock, List<Double> epss, List<Double> rating, List<Double> caps, List<Double> volumes) {
-        Double currentMA = (index < movingAvg.size()) ? movingAvg.get(index) : 0.0;
-        if (currentMA == null || currentMA == 0.0) return null;
+        double currentMA = (index < movingAvg.size() && movingAvg.get(index) != null) ? movingAvg.get(index) : 0.0;
+        if (currentMA == 0.0) return null;
 
         double currentPrice = price.get(index);
         double maGap = currentPrice / currentMA;
         double distFromMA = Math.abs(maGap - 1.0);
         double currentRating = (rating != null && index < rating.size()) ? rating.get(index) : 0.0;
         
-        Double avgNowVal = currentMA;
         int prevIdx = Math.max(0, index - params.timeFrameForUpwardLongAvg());
-        Double avgPrevVal = (prevIdx < movingAvg.size()) ? movingAvg.get(prevIdx) : 0.0;
-        double momentum = (avgPrevVal != null && avgPrevVal > 0) ? avgNowVal / avgPrevVal : 1.0;
+        double avgPrevVal = (prevIdx < movingAvg.size() && movingAvg.get(prevIdx) != null) ? movingAvg.get(prevIdx) : 0.0;
+        double momentum = avgPrevVal > 0 ? currentMA / avgPrevVal : 1.0;
 
         double avgVol = StatsCalculator.calculateAvgVolume(volumes, index, 30, stock.ticker_symbol());
         double rvol = (volumes != null && index < volumes.size() && avgVol > 0) ? volumes.get(index) / avgVol : 1.0;

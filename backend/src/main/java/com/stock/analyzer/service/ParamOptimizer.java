@@ -78,23 +78,72 @@ public class ParamOptimizer {
     }
 
     private ParamScore runGeneration(SimulationParams center, double bestScoreSoFar, double radius, int popSize, boolean rescue, SimulationDataPackage pkg) {
-        final java.util.concurrent.atomic.AtomicReference<ParamScore> bestInGen = 
-                new java.util.concurrent.atomic.AtomicReference<>(new ParamScore(center, bestScoreSoFar));
-        
-        List<CompletableFuture<Void>> futures = new java.util.ArrayList<>();
+        // --- STAGE 1: Discovery (All candidates on 10% of stocks) ---
+        List<SimulationParams> candidates = new java.util.ArrayList<>();
         for (int i = 0; i < popSize; i++) {
-            final int idx = i;
-            futures.add(CompletableFuture.runAsync(() -> {
-                SimulationParams p = generateCandidate(center, radius, idx, rescue, bestInGen.get().score());
+            candidates.add(generateCandidate(center, radius, i, rescue, -100.0));
+        }
+
+        List<Integer> subset10 = getShuffledIndices(pkg.stockCount).subList(0, Math.max(1, pkg.stockCount / 10));
+        List<ParamScore> stage1Results = evaluateParallel(candidates, subset10, pkg, rescue);
+
+        // --- STAGE 2: Refinement (Top 50 on 30% of stocks) ---
+        List<SimulationParams> top50 = stage1Results.stream()
+                .sorted(Comparator.comparingDouble(ParamScore::score).reversed())
+                .limit(50)
+                .map(ParamScore::params)
+                .toList();
+
+        List<Integer> subset30 = getShuffledIndices(pkg.stockCount).subList(0, Math.max(1, pkg.stockCount / 3));
+        List<ParamScore> stage2Results = evaluateParallel(top50, subset30, pkg, rescue);
+
+        // --- STAGE 3: Validation (Top 10 on 100% of stocks) ---
+        List<SimulationParams> top10 = stage2Results.stream()
+                .sorted(Comparator.comparingDouble(ParamScore::score).reversed())
+                .limit(10)
+                .map(ParamScore::params)
+                .toList();
+
+        List<Integer> allIndices = java.util.stream.IntStream.range(0, pkg.stockCount).boxed().toList();
+        List<ParamScore> finalResults = evaluateParallel(top10, allIndices, pkg, false); // Always full score here
+
+        return finalResults.stream()
+                .max(Comparator.comparingDouble(ParamScore::score))
+                .orElse(new ParamScore(center, bestScoreSoFar));
+    }
+
+    private List<ParamScore> evaluateParallel(List<SimulationParams> paramsList, List<Integer> stockSubset, SimulationDataPackage pkg, boolean rescue) {
+        List<CompletableFuture<ParamScore>> futures = new java.util.ArrayList<>();
+        for (SimulationParams p : paramsList) {
+            futures.add(CompletableFuture.supplyAsync(() -> {
                 Simulation sim = new Simulation(p);
-                int trades = evaluateRaw(p, pkg, sim);
+                int trades = 0;
+                for (int startTime : config.startTimes) {
+                    for (int searchTime : config.searchTimes) {
+                        for (int selectTime : config.selectTimes) {
+                            StocksTradeTimeFrame tf = new StocksTradeTimeFrame(startTime, searchTime, selectTime);
+                            for (int sIdx : stockSubset) {
+                                fastSimulate(pkg, sIdx, startTime, searchTime, sim, tf, false);
+                            }
+                            if (!tf.Trades().isEmpty()) {
+                                sim.AddTimeFrame(tf);
+                                trades += tf.Trades().size();
+                            }
+                        }
+                    }
+                }
                 double score = rescue ? (-100.0 + trades) : (trades > 10 ? sim.calculateSimulationScore() : -100.0);
-                
-                bestInGen.accumulateAndGet(new ParamScore(p, score), (old, next) -> next.score() > old.score() ? next : old);
+                return new ParamScore(p, score);
             }));
         }
-        CompletableFuture.allOf(futures.toArray(new CompletableFuture[0])).join();
-        return bestInGen.get();
+        return futures.stream().map(CompletableFuture::join).toList();
+    }
+
+    private List<Integer> getShuffledIndices(int count) {
+        List<Integer> indices = new java.util.ArrayList<>();
+        for (int i = 0; i < count; i++) indices.add(i);
+        java.util.Collections.shuffle(indices);
+        return indices;
     }
 
     private SimulationParams generateCandidate(SimulationParams center, double radius, int idx, boolean rescue, double genBestScore) {
@@ -143,7 +192,6 @@ public class ParamOptimizer {
         // Final sanity check for ML collection: if we still have no samples, force a pass over all data
         if (collectMLData && mlService.getSampleCount() < 100) {
             for (int sIdx = 0; sIdx < pkg.stockCount; sIdx++) {
-                // Wide window for ML data collection
                 fastSimulate(pkg, sIdx, pkg.daysCount - 60, pkg.daysCount - 60, simulation, new StocksTradeTimeFrame(0,0,0), true);
             }
         }
@@ -156,14 +204,14 @@ public class ParamOptimizer {
         int searchLimit = Math.min(timeStart + searchTime, pkg.daysCount);
 
         for (int i = timeStart; i < searchLimit; i++) {
-            SimulationResult res = sim.calculateFastScore(pkg, sIdx, i);
-            if (res.heuristicScore() > 0.65) {
+            double heuristic = sim.getFastHeuristic(pkg, sIdx, i);
+            if (heuristic > 0.65) {
                 double buyPrice = pkg.closePrices[sIdx][i];
                 double buyMA = pkg.getAvg(sIdx, i, sim.params.longMovingAvgTime());
                 if (buyMA == 0) continue;
                 double cutOff = (buyPrice / buyMA) * sim.params.sellCutOffPerc();
 
-                // Collection for ML - Optimized to use SimulationDataPackage
+                // Collection for ML
                 if (ml && i >= timeStart + 30 && i + 30 < pkg.daysCount) {
                     float[][] sequence = new float[30][12];
                     for (int k = 0; k < 30; k++) {
@@ -171,7 +219,6 @@ public class ParamOptimizer {
                         double[] features = sim.extractFeaturesFast(pkg, sIdx, dayOffset);
                         for (int f = 0; f < 12; f++) sequence[k][f] = (float) features[f];
                     }
-
                     double priceIn30Days = pkg.closePrices[sIdx][i + 30];
                     float gain30d = (float) ((priceIn30Days - buyPrice) / buyPrice);
                     mlService.collectSample(new TrainingSample(sequence, gain30d));
@@ -180,12 +227,9 @@ public class ParamOptimizer {
                 for (int j = 1; j < searchLimit - i; j++) {
                     double currentPrice = pkg.closePrices[sIdx][i + j];
                     double currentMA = pkg.getAvg(sIdx, i + j, sim.params.longMovingAvgTime());
-                    // Realistic execution: exit at stop-loss OR at the end of the simulation period
                     if (currentPrice < (currentMA * cutOff) || (j == searchLimit - i - 1)) {
-                        double exitPrice = currentPrice;
-                        double gain = (exitPrice - buyPrice) / buyPrice;
+                        double gain = (currentPrice - buyPrice) / buyPrice;
                         tf.AddRow(new StockTrade(pkg.tickers[sIdx], gain, daysBack - i + timeStart, j, buyPrice / buyMA, pkg.caps[sIdx][i], pkg.dates[sIdx][i]));
-
                         i += (j - 1);
                         break;
                     }

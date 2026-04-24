@@ -150,6 +150,22 @@ const StockDashboard: React.FC = () => {
         }
     };
 
+    const runOpportunities = async (configToUse: any) => {
+        setIsRunning(true);
+        setLogs([]);
+        setPercent(0);
+        try {
+            await fetch('http://localhost:8080/api/analysis/opportunities', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(configToUse)
+            });
+        } catch (error) {
+            setIsRunning(false);
+        }
+    };
+
+
     const startAnalysis = async () => {
         setIsRunning(true);
         setResults([]);
@@ -309,6 +325,14 @@ const StockDashboard: React.FC = () => {
                         >
                             <RefreshCw size={18} className={isRunning ? 'animate-spin' : ''} /> 
                             {isRunning ? 'Running...' : 'Backtest Current'}
+                        </button>
+                        <button 
+                            onClick={() => runOpportunities(currentConfig)}
+                            disabled={isRunning}
+                            className="flex items-center gap-2 px-4 py-2 rounded-lg bg-slate-800 text-slate-300 hover:bg-slate-700 transition-colors disabled:opacity-50"
+                        >
+                            <RefreshCw size={18} className={isRunning ? 'animate-spin' : ''} /> 
+                            {isRunning ? 'Running...' : 'Find Opportunities'}
                         </button>
                         <button 
                             onClick={exportParams}
