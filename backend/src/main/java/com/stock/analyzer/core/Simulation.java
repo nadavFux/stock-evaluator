@@ -241,7 +241,7 @@ public class Simulation {
     }
 
     public double calculateSimulationScore() {
-        List<Double> excessReturns = new ArrayList<>();
+        List<Double> dailyExcessReturns = new ArrayList<>();
         double dailyRiskFreeRate = Math.pow(1 + params.riskFreeRate(), 1.0 / 252) - 1;
 
         int totalTrades = 0;
@@ -249,7 +249,10 @@ public class Simulation {
             for (var trade : tradeFrame.Trades()) {
                 double tradeReturn = trade.getLastGained() * 100;
                 double riskFreeReturn = (Math.pow(1 + dailyRiskFreeRate, trade.getDays()) - 1) * 100;
-                excessReturns.add(tradeReturn - riskFreeReturn);
+                
+                // Normalizing by days to get daily excess return (Precision improvement)
+                double dailyExcess = (tradeReturn - riskFreeReturn) / Math.max(1, trade.getDays());
+                dailyExcessReturns.add(dailyExcess);
                 totalTrades++;
             }
         }
@@ -257,25 +260,34 @@ public class Simulation {
         if (totalTrades == 0) return -100.0;
 
         double sum = 0.0;
-        for (double r : excessReturns) sum += r;
-        double avgExcess = sum / totalTrades;
+        for (double r : dailyExcessReturns) sum += r;
+        double avgDailyExcess = sum / totalTrades;
 
-        if (totalTrades < 2) return avgExcess - 5.0; 
+        if (totalTrades < 2) return (avgDailyExcess * 100) - 5.0; // Penalty for insufficient data
 
         double varianceSum = 0.0;
-        for (double r : excessReturns) varianceSum += Math.pow(r - avgExcess, 2);
-        double stdDev = Math.sqrt(varianceSum / totalTrades);
+        for (double r : dailyExcessReturns) varianceSum += Math.pow(r - avgDailyExcess, 2);
+        
+        // Sample standard deviation (Bessel's correction)
+        double stdDevDaily = Math.sqrt(varianceSum / (totalTrades - 1));
 
-        double sharpe = avgExcess / (stdDev + 0.0001);
+        // Sharpe Ratio = Avg Daily Excess / StdDev Daily
+        // We use a floor of 0.01 (1 basis point) for volatility to prevent division explosions
+        double sharpeDaily = avgDailyExcess / (stdDevDaily + 0.01);
+        
+        // Annualize the Sharpe Ratio (Standard financial metric)
+        double annualizedSharpe = sharpeDaily * Math.sqrt(252);
+        
+        // Logarithmic Trade Volume Multiplier
+        // Full confidence at 1000+ trades
         double volumeMultiplier = Math.min(1.0, Math.log10(totalTrades) / 3.0); 
         
-        return sharpe * volumeMultiplier * 10.0; 
+        // Final score: Readability scale (Sharpe 2.0 * Volume 1.0 * 10 = 20.0)
+        return annualizedSharpe * volumeMultiplier * 10.0; 
     }
 
     public String getPerformanceReport() {
-        double totalExcessReturn = 0.0;
-        double totalRawReturn = 0.0;
-        double totalRiskFreeReturn = 0.0;
+        double totalDailyExcessReturn = 0.0;
         int totalTrades = 0;
         double dailyRiskFreeRate = Math.pow(1 + params.riskFreeRate(), 1.0 / 252) - 1;
 
@@ -283,20 +295,17 @@ public class Simulation {
             for (var trade : tradeFrame.Trades()) {
                 double tradeReturn = trade.getLastGained() * 100;
                 double riskFreeReturn = (Math.pow(1 + dailyRiskFreeRate, trade.getDays()) - 1) * 100;
-                totalRawReturn += tradeReturn;
-                totalRiskFreeReturn += riskFreeReturn;
-                totalExcessReturn += (tradeReturn - riskFreeReturn);
+                totalDailyExcessReturn += (tradeReturn - riskFreeReturn) / Math.max(1, trade.getDays());
                 totalTrades++;
             }
         }
         
         if (totalTrades == 0) return "No trades executed.";
-        double avgExcess = totalExcessReturn / totalTrades;
-        double avgRaw = totalRawReturn / totalTrades;
-        double avgRF = totalRiskFreeReturn / totalTrades;
+        double avgDailyExcess = totalDailyExcessReturn / totalTrades;
+        double score = calculateSimulationScore();
         
-        return String.format("Score (Avg Excess Return): %.2f%% | Avg Raw Return: %.2f%% | Avg Risk-Free Return: %.2f%% | Total Trades: %d", 
-                avgExcess, avgRaw, avgRF, totalTrades);
+        return String.format("Score (Risk-Adj): %.2f | Avg Daily Excess: %.4f%% | Total Trades: %d", 
+                score, avgDailyExcess, totalTrades);
     }
 
     public void AddTimeFrame(StocksTradeTimeFrame timeFrame) {

@@ -1,5 +1,6 @@
 package com.stock.analyzer.service;
 
+import ai.djl.util.Pair;
 import com.stock.analyzer.core.Simulation;
 import com.stock.analyzer.core.StocksTradeTimeFrame;
 import com.stock.analyzer.model.*;
@@ -35,11 +36,11 @@ public class ParamOptimizer {
         if (rescueMode)
             logger.info("Rescue Mode Active: Optimization will prioritize finding trades over Sharpe Ratio.");
 
-        double radius = 0.2;
+        double radius = 0.25;
         int maxIterations = 10;
-        int populationSize = 300;
+        int populationSize = 600;
 
-        for (int iter = 1; iter <= maxIterations && radius >= 0.02; iter++) {
+        for (int iter = 1; iter <= maxIterations && radius >= 0.05; iter++) {
             logger.info("Starting Generation {} with radius {}", iter, radius);
 
             ParamScore result = runGeneration(centerParams, bestScore, radius, populationSize, rescueMode, dataPkg);
@@ -123,8 +124,8 @@ public class ParamOptimizer {
         for (SimulationParams p : paramsList) {
             futures.add(CompletableFuture.supplyAsync(() -> {
                 Simulation sim = new Simulation(p);
-                int trades = evaluateRaw(p, pkg, sim, stockSubset);
-                double score = rescue ? (-100.0 + trades) : (trades > Math.max(10, stockSubset.size() / 10) ? sim.calculateSimulationScore() : -100.0);
+                Pair<Integer, Integer> tradesAndFrames = evaluateRaw(p, pkg, sim, stockSubset);
+                double score = rescue ? (-100.0 + tradesAndFrames.getKey()) : (tradesAndFrames.getKey() > Math.max(10, stockSubset.size() / tradesAndFrames.getValue()) ? sim.calculateSimulationScore() : -100.0);
                 return new ParamScore(p, score);
             }));
         }
@@ -144,12 +145,14 @@ public class ParamOptimizer {
         return randomize(center, radius);
     }
 
-    private int evaluateRaw(SimulationParams params, SimulationDataPackage pkg, Simulation simulation, List<Integer> stockSubset) {
+    private Pair<Integer, Integer> evaluateRaw(SimulationParams params, SimulationDataPackage pkg, Simulation simulation, List<Integer> stockSubset) {
         int tradeCount = 0;
+        int timeFrames = 0;
         for (int startTime : config.startTimes) {
             for (int searchTime : config.searchTimes) {
                 for (int selectTime : config.selectTimes) {
                     StocksTradeTimeFrame timeFrame = new StocksTradeTimeFrame(startTime, searchTime, selectTime);
+                    timeFrames++;
                     for (int sIdx : stockSubset) {
                         fastSimulate(pkg, sIdx, startTime, searchTime, selectTime, simulation, timeFrame, false);
                     }
@@ -160,7 +163,7 @@ public class ParamOptimizer {
                 }
             }
         }
-        return tradeCount;
+        return new Pair<>(tradeCount, timeFrames);
     }
 
     private double evaluate(SimulationParams params, SimulationDataPackage pkg, boolean collectMLData) {
@@ -180,20 +183,20 @@ public class ParamOptimizer {
                 }
             }
         }
-        
+
         if (collectMLData && mlService.getSampleCount() < 100) {
             for (int sIdx = 0; sIdx < pkg.stockCount; sIdx++) {
                 fastSimulate(pkg, sIdx, pkg.daysCount - 60, 60, 0, simulation, new StocksTradeTimeFrame(0, 0, 0), true);
             }
         }
 
-        return tradeCount > pkg.stockCount / 10 ? simulation.calculateSimulationScore() : -100.0;
+        return tradeCount > pkg.stockCount / 100 ? simulation.calculateSimulationScore() : -100.0;
     }
 
     private void fastSimulate(SimulationDataPackage pkg, int sIdx, int daysBack, int searchTime, int selectTime, Simulation sim, StocksTradeTimeFrame tf, boolean ml) {
         int timeStart = Math.max(0, pkg.daysCount - daysBack);
         int searchLimit = Math.min(timeStart + searchTime, pkg.daysCount);
-        
+
         // The absolute limit for a trade to finish is either the end of data 
         // OR timeStart + searchTime + selectTime (if selectTime > 0)
         int absoluteLimit = (selectTime > 0) ? Math.min(timeStart + searchTime + selectTime, pkg.daysCount) : pkg.daysCount;
@@ -224,7 +227,7 @@ public class ParamOptimizer {
                     int currentIdx = i + j;
                     double currentPrice = pkg.closePrices[sIdx][currentIdx];
                     double currentMA = pkg.getAvg(sIdx, currentIdx, sim.params.longMovingAvgTime());
-                    
+
                     // Exit at stop-loss OR at the end of the allowed period
                     if (currentPrice < (currentMA * cutOff) || (currentIdx == absoluteLimit - 1)) {
                         double gain = (currentPrice - buyPrice) / buyPrice;
