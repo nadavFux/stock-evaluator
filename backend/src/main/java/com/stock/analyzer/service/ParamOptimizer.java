@@ -38,9 +38,9 @@ public class ParamOptimizer {
 
         double radius = 0.25;
         int maxIterations = 10;
-        int populationSize = 600;
+        int populationSize = 300;
 
-        for (int iter = 1; iter <= maxIterations && radius >= 0.05; iter++) {
+        for (int iter = 1; iter <= maxIterations && radius >= 0.08; iter++) {
             logger.info("Starting Generation {} with radius {}", iter, radius);
 
             ParamScore result = runGeneration(centerParams, bestScore, radius, populationSize, rescueMode, dataPkg);
@@ -59,7 +59,7 @@ public class ParamOptimizer {
             }
 
             com.stock.analyzer.core.StatsCalculator.clearSimulationCache();
-            radius *= 0.75; // Zoom in
+            radius *= 0.8; // Zoom in
         }
 
         logger.info("Optimization complete. Final evaluation and ML data collection...");
@@ -73,7 +73,7 @@ public class ParamOptimizer {
                 config.timeFrameForUpwardLongAvg.get(0), config.aboveAvgRatingPricePerc.get(0), config.timeFrameForUpwardShortPrice.get(0),
                 config.timeFrameForOscillator.get(0), config.maxRSI.get(0), config.minMarketCap.get(0), config.longMovingAvgTimes.get(0),
                 config.minRatesOfAvgInc.get(0), config.maxPERatios.get(0), config.minRatings.get(0), config.maxRatings.get(0), config.maxMarketCap.get(0),
-                config.riskFreeRate.get(0),
+                config.riskFreeRate.get(0), config.buyThreshold == null || config.buyThreshold.isEmpty() ? 0.65 : config.buyThreshold.get(0),
                 config.movingAvgGapWeight == null || config.movingAvgGapWeight.isEmpty() ? 0.2 : config.movingAvgGapWeight.get(0),
                 config.reversionToMeanWeight == null || config.reversionToMeanWeight.isEmpty() ? 0.15 : config.reversionToMeanWeight.get(0),
                 config.ratingWeight == null || config.ratingWeight.isEmpty() ? 0.2 : config.ratingWeight.get(0),
@@ -85,26 +85,16 @@ public class ParamOptimizer {
     }
 
     private ParamScore runGeneration(SimulationParams center, double bestScoreSoFar, double radius, int popSize, boolean rescue, SimulationDataPackage pkg) {
-        // --- STAGE 1: Discovery (All candidates on 33% of stocks) ---
+        // --- STAGE 1: Discovery (All candidates on 50% of stocks) ---
         List<SimulationParams> candidates = new ArrayList<>();
         for (int i = 0; i < popSize; i++) {
             candidates.add(generateCandidate(center, radius, i, rescue, bestScoreSoFar));
         }
 
-        List<Integer> subset33 = getShuffledIndices(pkg.stockCount).subList(0, Math.max(1, pkg.stockCount / 3));
-        List<ParamScore> stage1Results = evaluateParallel(candidates, subset33, pkg, rescue);
-
-        // --- STAGE 2: Refinement (Top 50 on 50% of stocks) ---
-        List<SimulationParams> top50 = stage1Results.stream()
-                .sorted(Comparator.comparingDouble(ParamScore::score).reversed())
-                .limit(50)
-                .map(ParamScore::params)
-                .toList();
-
         List<Integer> subset50 = getShuffledIndices(pkg.stockCount).subList(0, Math.max(1, pkg.stockCount / 2));
-        List<ParamScore> stage2Results = evaluateParallel(top50, subset50, pkg, rescue);
+        List<ParamScore> stage2Results = evaluateParallel(candidates, subset50, pkg, rescue);
 
-        // --- STAGE 3: Validation (Top 10 on 100% of stocks) ---
+        // --- STAGE 2: Validation (Top 10 on 100% of stocks) ---
         List<SimulationParams> top10 = stage2Results.stream()
                 .sorted(Comparator.comparingDouble(ParamScore::score).reversed())
                 .limit(10)
@@ -125,7 +115,7 @@ public class ParamOptimizer {
             futures.add(CompletableFuture.supplyAsync(() -> {
                 Simulation sim = new Simulation(p);
                 Pair<Integer, Integer> tradesAndFrames = evaluateRaw(p, pkg, sim, stockSubset);
-                double score = rescue ? (-100.0 + tradesAndFrames.getKey()) : (tradesAndFrames.getKey() > Math.max(10, stockSubset.size() / tradesAndFrames.getValue()) ? sim.calculateSimulationScore() : -100.0);
+                double score = rescue ? (-100.0 + tradesAndFrames.getKey()) : (tradesAndFrames.getKey() > Math.max(15, (stockSubset.size() * tradesAndFrames.getValue()) / 25) ? sim.calculateSimulationScore() : -100.0);
                 return new ParamScore(p, score);
             }));
         }
@@ -203,11 +193,8 @@ public class ParamOptimizer {
 
         for (int i = timeStart; i < searchLimit; i++) {
             double heuristic = sim.getFastHeuristic(pkg, sIdx, i);
-            if (heuristic > 0.65) {
+            if (heuristic > sim.params.buyThreshold()) {
                 double buyPrice = pkg.closePrices[sIdx][i];
-                double buyMA = pkg.getAvg(sIdx, i, sim.params.longMovingAvgTime());
-                if (buyMA == 0) continue;
-                double cutOff = (buyPrice / buyMA) * sim.params.sellCutOffPerc();
 
                 // Collection for ML
                 if (ml && i >= timeStart + 30 && i + 30 < pkg.daysCount) {
@@ -229,9 +216,9 @@ public class ParamOptimizer {
                     double currentMA = pkg.getAvg(sIdx, currentIdx, sim.params.longMovingAvgTime());
 
                     // Exit at stop-loss OR at the end of the allowed period
-                    if (currentPrice < (currentMA * cutOff) || (currentIdx == absoluteLimit - 1)) {
+                    if (currentPrice < (currentMA * sim.params.sellCutOffPerc()) || (currentIdx == absoluteLimit - 1)) {
                         double gain = (currentPrice - buyPrice) / buyPrice;
-                        tf.AddRow(new StockTrade(pkg.tickers[sIdx], gain, pkg.daysCount - i, j, buyPrice / buyMA, pkg.caps[sIdx][i], pkg.dates[sIdx][i]));
+                        tf.AddRow(new StockTrade(pkg.tickers[sIdx], gain, pkg.daysCount - i, j, currentPrice, pkg.caps[sIdx][i], pkg.dates[sIdx][i]));
                         i = currentIdx; // Skip days where we were in the trade
                         break;
                     }
@@ -247,7 +234,7 @@ public class ParamOptimizer {
         double maxRating = minRating + 0.1 + random.nextDouble() * (5.0 - minRating - 0.1);
 
         return new SimulationParams(
-                0.5 + random.nextDouble() * 0.5,
+                0.5 + random.nextDouble() * 0.49, // Max 0.99
                 0.1 + random.nextDouble() * 0.9,
                 1.0 + random.nextDouble() * 0.5,
                 5 + random.nextInt(195),
@@ -263,6 +250,7 @@ public class ParamOptimizer {
                 maxRating,
                 maxCap,
                 0.10,
+                0.5 + random.nextDouble() * 0.35, // buyThreshold (0.5 - 0.85)
                 // Weights
                 random.nextDouble(), random.nextDouble(), random.nextDouble(),
                 random.nextDouble(), random.nextDouble(), random.nextDouble(), random.nextDouble()
@@ -283,7 +271,7 @@ public class ParamOptimizer {
         double maxRating = clamp(center.maxRating() + randomDouble(ratingStep), minRating + 0.1, 5.0);
 
         return new SimulationParams(
-                clamp(center.sellCutOffPerc() + randomDouble(pctStep), 0.1, 2.0),
+                clamp(center.sellCutOffPerc() + randomDouble(pctStep), 0.1, 0.99), // Max 0.99
                 clamp(center.lowerPriceToLongAvgBuyIn() + randomDouble(pctStep), 0.1, 2.0),
                 clamp(center.higherPriceToLongAvgBuyIn() + randomDouble(pctStep), 0.1, 3.0),
                 clampInt(center.timeFrameForUpwardLongAvg() + randomInt(smallDayStep), 2, 500),
@@ -299,6 +287,7 @@ public class ParamOptimizer {
                 maxRating,
                 maxCap,
                 0.10,
+                clamp(center.buyThreshold() + randomDouble(radius), 0.4, 0.95),
                 // Weights
                 clamp(center.movingAvgGapWeight() + randomDouble(pctStep), 0.0, 1.0),
                 clamp(center.reversionToMeanWeight() + randomDouble(pctStep), 0.0, 1.0),

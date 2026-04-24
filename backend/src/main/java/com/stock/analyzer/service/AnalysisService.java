@@ -77,7 +77,7 @@ public class AnalysisService {
                 broadcast("ML_FEATURES", mlService.getFeatureImportance());
 
                 broadcast("PROGRESS", "Generating recommendations...");
-                MLModelService trainedML = mlService; 
+                MLModelService trainedML = mlService;
                 Simulation inferenceSim = new Simulation(bestParams);
                 inferenceSim.setMLService(trainedML);
                 StatsCalculator.AddSimulation(inferenceSim);
@@ -86,13 +86,10 @@ public class AnalysisService {
                         .map(stock -> {
                             List<Double> movingAvg = StatsCalculator.MovingAvg(stock, bestParams.longMovingAvgTime());
                             SimulationResult res = inferenceSim.calculateParamScore(stock.closePrices(), movingAvg, stock.closePrices().size() - 1, stock.stock(), stock.epss(), stock.rating(), stock.caps(), stock.volumes());
-                            
-                            List<TradePoint> tradePoints = new ArrayList<>();
-                            if (res.heuristicScore() > 0.65) {
-                                tradePoints.add(new TradePoint(stock.dates().get(stock.dates().size() - 1), stock.closePrices().get(stock.closePrices().size() - 1), "BUY"));
-                            }
 
-                            if (res.heuristicScore() > 0.6 || res.aiPredictedReturn() > 0.02) {
+                            List<TradePoint> tradePoints = new ArrayList<>();
+                            if (res.heuristicScore() > bestParams.buyThreshold()) {
+                                tradePoints.add(new TradePoint(stock.dates().get(stock.dates().size() - 1), stock.closePrices().get(stock.closePrices().size() - 1), "BUY"));
                                 return new StockCheckResult(stock, res, tradePoints);
                             }
                             return null;
@@ -145,7 +142,7 @@ public class AnalysisService {
                 MLModelService mlService = getTrainedMLService(config);
                 Simulation sim = new Simulation(params);
                 sim.setMLService(mlService);
-                
+
                 List<StockTrade> allTrades = new ArrayList<>();
                 int daysToBacktest = 100;
 
@@ -155,19 +152,16 @@ public class AnalysisService {
 
                     for (int i = startIdx + 30; i < days; i++) {
                         SimulationResult res = sim.calculateFastScore(new SimulationDataPackage(List.of(s)), 0, i);
-                        if (res.heuristicScore() > 0.65) {
+                        if (res.heuristicScore() > params.buyThreshold()) {
                             double buyPrice = s.closePrices().get(i);
-                            double buyMA = StatsCalculator.calculateSlidingAvg(s.closePrices(), i, params.longMovingAvgTime(), s.stock().ticker_symbol());
-                            if (buyMA == 0) continue;
-                            double cutOff = (buyPrice / buyMA) * params.sellCutOffPerc();
 
                             for (int j = i + 1; j < days; j++) {
                                 double currentPrice = s.closePrices().get(j);
                                 double currentMA = StatsCalculator.calculateSlidingAvg(s.closePrices(), j, params.longMovingAvgTime(), s.stock().ticker_symbol());
                                 if (currentMA == 0) break;
-                                if (currentPrice < (currentMA * cutOff) || j == days - 1) {
+                                if (currentPrice < (currentMA * params.sellCutOffPerc()) || j == days - 1) {
                                     double gain = (currentPrice - buyPrice) / buyPrice;
-                                    allTrades.add(new StockTrade(s.stock().ticker_symbol(), gain, days - i, j - i, buyPrice / buyMA, s.caps().get(i), s.dates().get(i)));
+                                    allTrades.add(new StockTrade(s.stock().ticker_symbol(), gain, days - i, j - i, currentPrice, s.caps().get(j), s.dates().get(i)));
                                     i = j;
                                     break;
                                 }
@@ -227,7 +221,7 @@ public class AnalysisService {
                 MLModelService mlService = getTrainedMLService(config);
                 Simulation inferenceSim = new Simulation(params);
                 inferenceSim.setMLService(mlService);
-                
+
                 StatsCalculator.AddSimulation(inferenceSim);
 
                 List<StockCheckResult> recommendations = allStocks.stream()
@@ -236,7 +230,7 @@ public class AnalysisService {
                             SimulationResult res = inferenceSim.calculateParamScore(stock.closePrices(), movingAvg, stock.closePrices().size() - 1, stock.stock(), stock.epss(), stock.rating(), stock.caps(), stock.volumes());
 
                             List<TradePoint> tradePoints = new ArrayList<>();
-                            if (res.heuristicScore() > 0.65) {
+                            if (res.heuristicScore() > params.buyThreshold()) {
                                 tradePoints.add(new TradePoint(stock.dates().get(stock.dates().size() - 1), stock.closePrices().get(stock.closePrices().size() - 1), "BUY"));
                             }
 

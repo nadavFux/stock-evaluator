@@ -298,7 +298,7 @@ const ConfigPanel: React.FC<ConfigPanelProps> = ({ config, onSave, onClose, prof
             'timeFrameForUpwardLongAvg', 'timeFrameForOscillator', 'maxPERatios',
             'aboveAvgRatingPricePerc', 'timeFrameForUpwardShortPrice', 'maxRSI',
             'minMarketCap', 'maxMarketCap', 'minRatesOfAvgInc', 'minRatings', 'maxRatings',
-            'riskFreeRate', 'movingAvgGapWeight', 'reversionToMeanWeight', 'ratingWeight',
+            'buyThreshold', 'riskFreeRate', 'movingAvgGapWeight', 'reversionToMeanWeight', 'ratingWeight',
             'upwardIncRateWeight', 'rvolWeight', 'pegWeight', 'volatilityCompressionWeight'
         ];
         fields.forEach(f => {
@@ -427,6 +427,7 @@ const ConfigPanel: React.FC<ConfigPanelProps> = ({ config, onSave, onClose, prof
                                         <RangeInput label="MA Upward Timeframe" values={localConfig.timeFrameForUpwardLongAvg || []} onChange={(v) => updateField('timeFrameForUpwardLongAvg', v)} />
                                         <RangeInput label="Oscillator Window" values={localConfig.timeFrameForOscillator || []} onChange={(v) => updateField('timeFrameForOscillator', v)} />
                                         <RangeInput label="Max PE Ratio" values={localConfig.maxPERatios || []} onChange={(v) => updateField('maxPERatios', v)} />
+                                        <RangeInput label="Buy Threshold Score" values={localConfig.buyThreshold || []} onChange={(v) => updateField('buyThreshold', v)} step={0.01} min={0.4} />
                                         <RangeInput label="Min Rating (1-5)" values={localConfig.minRatings || []} onChange={(v) => updateField('minRatings', v)} step={0.1} />
                                         <RangeInput label="Max Rating (1-5)" values={localConfig.maxRatings || []} onChange={(v) => updateField('maxRatings', v)} step={0.1} />
                                         <RangeInput label="Max RSI" values={localConfig.maxRSI || []} onChange={(v) => updateField('maxRSI', v)} step={1} />

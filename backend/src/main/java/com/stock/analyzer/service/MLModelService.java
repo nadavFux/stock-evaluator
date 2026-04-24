@@ -7,15 +7,18 @@ import ai.djl.ndarray.NDList;
 import ai.djl.ndarray.NDManager;
 import ai.djl.ndarray.types.Shape;
 import ai.djl.nn.Block;
-import ai.djl.nn.SequentialBlock;
 import ai.djl.nn.Parameter;
+import ai.djl.nn.SequentialBlock;
 import ai.djl.nn.core.Linear;
 import ai.djl.nn.recurrent.LSTM;
 import ai.djl.training.DefaultTrainingConfig;
 import ai.djl.training.EasyTrain;
 import ai.djl.training.Trainer;
+import ai.djl.training.dataset.ArrayDataset;
 import ai.djl.training.dataset.Batch;
+import ai.djl.training.dataset.RandomAccessDataset;
 import ai.djl.training.initializer.XavierInitializer;
+import ai.djl.training.listener.TrainingListener;
 import ai.djl.training.loss.Loss;
 import ai.djl.training.optimizer.Optimizer;
 import ai.djl.translate.Batchifier;
@@ -26,7 +29,7 @@ import com.stock.analyzer.model.TrainingSample;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import java.io.*;
+import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Paths;
 import java.util.ArrayList;
@@ -35,7 +38,7 @@ import java.util.Map;
 
 public class MLModelService {
     private static final Logger logger = LoggerFactory.getLogger(MLModelService.class);
-    private Model model;
+    private final Model model;
     private final List<float[][]> sequences = new ArrayList<>();
     private final List<Float> labels = new ArrayList<>();
 
@@ -86,22 +89,43 @@ public class MLModelService {
             NDArray x = manager.create(new Shape(sequences.size(), 30, 12));
             NDArray y = manager.create(new Shape(sequences.size(), 1));
 
-            for (int i = 0; i < sequences.size(); i++) {
-                x.set(new ai.djl.ndarray.index.NDIndex(i), manager.create(sequences.get(i)));
-                y.set(new ai.djl.ndarray.index.NDIndex(i, 0), labels.get(i));
+            synchronized (sequences) {
+                for (int i = 0; i < sequences.size(); i++) {
+                    x.set(new ai.djl.ndarray.index.NDIndex(i), manager.create(sequences.get(i)));
+                    y.set(new ai.djl.ndarray.index.NDIndex(i, 0), labels.get(i));
+                }
             }
+
+            // Create Dataset with Shuffling and Batching
+            ArrayDataset dataset = new ArrayDataset.Builder()
+                    .setData(x)
+                    .optLabels(y)
+                    .setSampling(32, true) // Batch size 32, Shuffle true
+                    .build();
+
+            // Split into Train (80%) and Validation (20%)
+            RandomAccessDataset[] sets = dataset.randomSplit(8, 2);
+            RandomAccessDataset trainSet = sets[0];
+            RandomAccessDataset validSet = sets[1];
 
             DefaultTrainingConfig config = new DefaultTrainingConfig(new PinballLoss())
                     .optOptimizer(Optimizer.adam().build())
-                    .optInitializer(new XavierInitializer(), Parameter.Type.WEIGHT);
+                    .optInitializer(new XavierInitializer(), Parameter.Type.WEIGHT)
+                    .addTrainingListeners(TrainingListener.Defaults.logging());
 
             try (Trainer trainer = model.newTrainer(config)) {
                 trainer.initialize(new Shape(1, 30, 12));
-                // Simplified training loop for brevity in this task
-                for (int epoch = 0; epoch < 10; epoch++) {
-                    Batch batch = new Batch(manager, new NDList(x), new NDList(y), sequences.size(), Batchifier.STACK, Batchifier.STACK, 0, 1);
-                    EasyTrain.trainBatch(trainer, batch);
-                    trainer.step();
+
+                int epochs = 30;
+                for (int epoch = 0; epoch < epochs; epoch++) {
+                    for (Batch batch : trainer.iterateDataset(trainSet)) {
+                        EasyTrain.trainBatch(trainer, batch);
+                        trainer.step();
+                        batch.close();
+                    }
+
+                    // Validation phase
+                    trainer.notifyListeners(listener -> listener.onEpoch(trainer));
                 }
             }
         } catch (Exception e) {
@@ -116,11 +140,19 @@ public class MLModelService {
         try (NDManager manager = NDManager.newBaseManager();
              Predictor<NDList, NDList> predictor = model.newPredictor(new Translator<NDList, NDList>() {
                  @Override
-                 public NDList processInput(TranslatorContext ctx, NDList input) { return input; }
+                 public NDList processInput(TranslatorContext ctx, NDList input) {
+                     return input;
+                 }
+
                  @Override
-                 public NDList processOutput(TranslatorContext ctx, NDList list) { return list; }
+                 public NDList processOutput(TranslatorContext ctx, NDList list) {
+                     return list;
+                 }
+
                  @Override
-                 public Batchifier getBatchifier() { return Batchifier.STACK; }
+                 public Batchifier getBatchifier() {
+                     return Batchifier.STACK;
+                 }
              })) {
             NDArray input = manager.create(sequence);
             NDList output = predictor.predict(new NDList(input));
@@ -136,18 +168,18 @@ public class MLModelService {
         // Since we are using an LSTM, feature importance isn't as direct as Random Forest.
         // However, we can return the list of 12 input features that constitute the sequence.
         return List.of(
-            Map.of("name", "MA Gap", "val", 0.15),
-            Map.of("name", "Reversion to Mean", "val", 0.12),
-            Map.of("name", "Analyst Rating", "val", 0.10),
-            Map.of("name", "Momentum", "val", 0.14),
-            Map.of("name", "Relative Volume", "val", 0.08),
-            Map.of("name", "PEG Ratio", "val", 0.06),
-            Map.of("name", "Volatility", "val", 0.10),
-            Map.of("name", "RSI Indicator", "val", 0.07),
-            Map.of("name", "ATR (Volatility)", "val", 0.05),
-            Map.of("name", "MACD Histogram", "val", 0.05),
-            Map.of("name", "Bollinger %B", "val", 0.04),
-            Map.of("name", "Sector Relative Strength", "val", 0.04)
+                Map.of("name", "MA Gap", "val", 0.15),
+                Map.of("name", "Reversion to Mean", "val", 0.12),
+                Map.of("name", "Analyst Rating", "val", 0.10),
+                Map.of("name", "Momentum", "val", 0.14),
+                Map.of("name", "Relative Volume", "val", 0.08),
+                Map.of("name", "PEG Ratio", "val", 0.06),
+                Map.of("name", "Volatility", "val", 0.10),
+                Map.of("name", "RSI Indicator", "val", 0.07),
+                Map.of("name", "ATR (Volatility)", "val", 0.05),
+                Map.of("name", "MACD Histogram", "val", 0.05),
+                Map.of("name", "Bollinger %B", "val", 0.04),
+                Map.of("name", "Sector Relative Strength", "val", 0.04)
         );
     }
 
@@ -184,7 +216,10 @@ public class MLModelService {
     }
 
     private static class PinballLoss extends Loss {
-        public PinballLoss() { super("PinballLoss"); }
+        public PinballLoss() {
+            super("PinballLoss");
+        }
+
         @Override
         public NDArray evaluate(NDList labels, NDList predictions) {
             NDArray y = labels.singletonOrThrow();

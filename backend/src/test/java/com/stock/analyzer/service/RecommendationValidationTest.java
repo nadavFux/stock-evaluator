@@ -72,6 +72,7 @@ public class RecommendationValidationTest {
         config.selectTimes = List.of(1);
         config.minRatings = List.of(1.0);
         config.maxRatings = List.of(5.0);
+        config.buyThreshold = List.of(0.65);
         config.longMovingAvgTimes = List.of(5);
 
         config.movingAvgGapWeight = List.of(0.2);

@@ -15,7 +15,7 @@ public class ParamOptimizerTest {
 
     @Test
     public void testSimulationScoreReflectsGains() {
-        SimulationParams params = new SimulationParams(0.95, 0.9, 1.1, 50, 1.05, 20, 10, 70, 0, 20, 0, 100, 1, 5, 1000000000, 0.0,
+        SimulationParams params = new SimulationParams(0.95, 0.9, 1.1, 50, 1.05, 20, 10, 70, 0, 20, 0, 100, 1, 5, 1000000000, 0.0, 0.65,
             0.2, 0.15, 0.2, 0.15, 0.1, 0.1, 0.1);
         Simulation sim = new Simulation(params);
         
@@ -33,7 +33,7 @@ public class ParamOptimizerTest {
 
     @Test
     public void testRandomizeRespectsLogicalBounds() {
-        SimulationParams center = new SimulationParams(0.95, 0.9, 1.1, 50, 1.05, 20, 100, 70.0, 1000.0, 140, 1.1, 25, 3.75, 4.6, 2750.0, 0.05,
+        SimulationParams center = new SimulationParams(0.95, 0.9, 1.1, 50, 1.05, 20, 100, 70.0, 1000.0, 140, 1.1, 25, 3.75, 4.6, 2750.0, 0.05, 0.65,
             0.2, 0.15, 0.2, 0.15, 0.1, 0.1, 0.1);
         
         SimulationRangeConfig config = new SimulationRangeConfig();
@@ -58,6 +58,40 @@ public class ParamOptimizerTest {
             assertWithin(rand.minRating(), 0.0, 5.0, "minRating");
             assertWithin(rand.maxRating(), 0.0, 5.0, "maxRating");
         }
+    }
+
+    @Test
+    public void testLinearVolumeScaling() {
+        SimulationParams params = new SimulationParams(0.95, 0.9, 1.1, 50, 1.05, 20, 100, 70, 0, 20, 0, 100, 1, 5, 1000000000, 0.0, 0.65,
+            0.2, 0.15, 0.2, 0.15, 0.1, 0.1, 0.1);
+        
+        // Sim 1: 1 trade per frame (Low confidence)
+        Simulation sim1 = new Simulation(params);
+        for (int i = 0; i < 5; i++) {
+            StocksTradeTimeFrame tf = new StocksTradeTimeFrame(i, 100, 100);
+            tf.AddRow(new StockTrade("TEST", 0.1, 0, 10, 1.0, 1000.0, "2023-01-01"));
+            sim1.AddTimeFrame(tf);
+        }
+        
+        // Sim 2: 5 trades per frame (Full confidence)
+        Simulation sim2 = new Simulation(params);
+        for (int i = 0; i < 5; i++) {
+            StocksTradeTimeFrame tf = new StocksTradeTimeFrame(i, 100, 100);
+            for (int j = 0; j < 5; j++) {
+                tf.AddRow(new StockTrade("TEST", 0.1, 0, 10, 1.0, 1000.0, "2023-01-01"));
+            }
+            sim2.AddTimeFrame(tf);
+        }
+        
+        double score1 = sim1.calculateSimulationScore();
+        double score2 = sim2.calculateSimulationScore();
+        
+        System.out.println("Low Volume Score: " + score1);
+        System.out.println("High Volume Score: " + score2);
+        
+        assertTrue(score2 > score1, "Higher trades per frame should result in a higher risk-adjusted score");
+        // score2 should be approx 5x score1 due to linear scaling (1/5 vs 5/5 multiplier)
+        assertTrue(score2 >= score1 * 4, "Score 2 should be significantly higher due to full volume multiplier");
     }
 
     private void assertWithin(double val, double min, double max, String field) {

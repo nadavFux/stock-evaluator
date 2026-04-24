@@ -60,6 +60,7 @@ const StockDashboard: React.FC = () => {
             minRatesOfAvgInc: [1.1],
             minRatings: [3.75],
             maxRatings: [4.6],
+            buyThreshold: [0.65],
             riskFreeRate: [0.05],
             movingAvgGapWeight: [0.20],
             reversionToMeanWeight: [0.15],

@@ -16,7 +16,7 @@ public class SimulationTest {
 
     private SimulationParams createDefaultParams() {
         return new SimulationParams(
-            0.95, 0.85, 1.1, 50, 1.05, 20, 10, 70, 1000, 5, 1.0, 30, 1.0, 5.0, 1000000000, 0.05,
+            0.95, 0.85, 1.1, 50, 1.05, 20, 10, 70, 1000, 5, 1.0, 30, 1.0, 5.0, 1000000000, 0.05, 0.65,
             0.2, 0.15, 0.2, 0.15, 0.1, 0.1, 0.1
         );
     }

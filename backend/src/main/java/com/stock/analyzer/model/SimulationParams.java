@@ -17,6 +17,7 @@ public record SimulationParams(
     double maxRating,
     double maxMarketCap,
     double riskFreeRate,
+    double buyThreshold,
     
     // Scoring Weights
     double movingAvgGapWeight,
@@ -44,6 +45,7 @@ public record SimulationParams(
         private double maxRating;
         private double maxMarketCap;
         private double riskFreeRate;
+        private double buyThreshold;
         
         private double movingAvgGapWeight;
         private double reversionToMeanWeight;
@@ -70,6 +72,7 @@ public record SimulationParams(
             this.maxRating = other.maxRating();
             this.maxMarketCap = other.maxMarketCap();
             this.riskFreeRate = other.riskFreeRate();
+            this.buyThreshold = other.buyThreshold();
             
             this.movingAvgGapWeight = other.movingAvgGapWeight();
             this.reversionToMeanWeight = other.reversionToMeanWeight();
@@ -85,7 +88,7 @@ public record SimulationParams(
         public Builder higherPriceToLongAvgBuyIn(double val) { this.higherPriceToLongAvgBuyIn = val; return this; }
         public Builder timeFrameForUpwardLongAvg(int val) { this.timeFrameForUpwardLongAvg = val; return this; }
         public Builder aboveAvgRatingPricePerc(double val) { this.aboveAvgRatingPricePerc = val; return this; }
-        public Builder timeFrameForUpwardShortPrice(int val) { this.timeFrameForUpwardShortPrice = val; return this; }
+        public Builder timeFrameForUpShortPrice(int val) { this.timeFrameForUpwardShortPrice = val; return this; }
         public Builder timeFrameForOscillator(int val) { this.timeFrameForOscillator = val; return this; }
         public Builder maxRSI(double val) { this.maxRSI = val; return this; }
         public Builder minMarketCap(double val) { this.minMarketCap = val; return this; }
@@ -96,6 +99,7 @@ public record SimulationParams(
         public Builder maxRating(double val) { this.maxRating = val; return this; }
         public Builder maxMarketCap(double val) { this.maxMarketCap = val; return this; }
         public Builder riskFreeRate(double val) { this.riskFreeRate = val; return this; }
+        public Builder buyThreshold(double val) { this.buyThreshold = val; return this; }
         
         public Builder movingAvgGapWeight(double val) { this.movingAvgGapWeight = val; return this; }
         public Builder reversionToMeanWeight(double val) { this.reversionToMeanWeight = val; return this; }
@@ -110,7 +114,7 @@ public record SimulationParams(
                 sellCutOffPerc, lowerPriceToLongAvgBuyIn, higherPriceToLongAvgBuyIn, timeFrameForUpwardLongAvg, 
                 aboveAvgRatingPricePerc, timeFrameForUpwardShortPrice, timeFrameForOscillator, maxRSI, 
                 minMarketCap, longMovingAvgTime, minRateOfAvgInc, maxPERatio, minRating, maxRating, 
-                maxMarketCap, riskFreeRate,
+                maxMarketCap, riskFreeRate, buyThreshold,
                 movingAvgGapWeight, reversionToMeanWeight, ratingWeight, upwardIncRateWeight, rvolWeight, pegWeight, volatilityCompressionWeight
             );
         }
