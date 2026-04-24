@@ -6,6 +6,8 @@ import com.stock.analyzer.model.*;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.util.ArrayList;
+import java.util.Collections;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Random;
@@ -74,19 +76,21 @@ public class ParamOptimizer {
                 config.timeFrameForUpwardLongAvg.get(0), config.aboveAvgRatingPricePerc.get(0), config.timeFrameForUpwardShortPrice.get(0),
                 config.timeFrameForOscillator.get(0), config.maxRSI.get(0), config.minMarketCap.get(0), config.longMovingAvgTimes.get(0),
                 config.minRatesOfAvgInc.get(0), config.maxPERatios.get(0), config.minRatings.get(0), config.maxRatings.get(0), config.maxMarketCap.get(0),
-                config.riskFreeRate.get(0)
+                config.riskFreeRate.get(0),
+                config.movingAvgGapWeight.get(0), config.reversionToMeanWeight.get(0), config.ratingWeight.get(0),
+                config.upwardIncRateWeight.get(0), config.rvolWeight.get(0), config.pegWeight.get(0), config.volatilityCompressionWeight.get(0)
         );
     }
 
     private ParamScore runGeneration(SimulationParams center, double bestScoreSoFar, double radius, int popSize, boolean rescue, SimulationDataPackage pkg) {
-        // --- STAGE 1: Discovery (All candidates on 30% of stocks) ---
-        List<SimulationParams> candidates = new java.util.ArrayList<>();
+        // --- STAGE 1: Discovery (All candidates on 33% of stocks) ---
+        List<SimulationParams> candidates = new ArrayList<>();
         for (int i = 0; i < popSize; i++) {
-            candidates.add(generateCandidate(center, radius, i, rescue, -100.0));
+            candidates.add(generateCandidate(center, radius, i, rescue, bestScoreSoFar));
         }
 
-        List<Integer> subset10 = getShuffledIndices(pkg.stockCount).subList(0, Math.max(1, pkg.stockCount / 3));
-        List<ParamScore> stage1Results = evaluateParallel(candidates, subset10, pkg, rescue);
+        List<Integer> subset33 = getShuffledIndices(pkg.stockCount).subList(0, Math.max(1, pkg.stockCount / 3));
+        List<ParamScore> stage1Results = evaluateParallel(candidates, subset33, pkg, rescue);
 
         // --- STAGE 2: Refinement (Top 50 on 50% of stocks) ---
         List<SimulationParams> top50 = stage1Results.stream()
@@ -95,8 +99,8 @@ public class ParamOptimizer {
                 .map(ParamScore::params)
                 .toList();
 
-        List<Integer> subset30 = getShuffledIndices(pkg.stockCount).subList(0, Math.max(1, pkg.stockCount / 2));
-        List<ParamScore> stage2Results = evaluateParallel(top50, subset30, pkg, rescue);
+        List<Integer> subset50 = getShuffledIndices(pkg.stockCount).subList(0, Math.max(1, pkg.stockCount / 2));
+        List<ParamScore> stage2Results = evaluateParallel(top50, subset50, pkg, rescue);
 
         // --- STAGE 3: Validation (Top 10 on 100% of stocks) ---
         List<SimulationParams> top10 = stage2Results.stream()
@@ -106,7 +110,7 @@ public class ParamOptimizer {
                 .toList();
 
         List<Integer> allIndices = java.util.stream.IntStream.range(0, pkg.stockCount).boxed().toList();
-        List<ParamScore> finalResults = evaluateParallel(top10, allIndices, pkg, false); // Always full score here
+        List<ParamScore> finalResults = evaluateParallel(top10, allIndices, pkg, false); 
 
         return finalResults.stream()
                 .max(Comparator.comparingDouble(ParamScore::score))
@@ -114,26 +118,12 @@ public class ParamOptimizer {
     }
 
     private List<ParamScore> evaluateParallel(List<SimulationParams> paramsList, List<Integer> stockSubset, SimulationDataPackage pkg, boolean rescue) {
-        List<CompletableFuture<ParamScore>> futures = new java.util.ArrayList<>();
+        List<CompletableFuture<ParamScore>> futures = new ArrayList<>();
         for (SimulationParams p : paramsList) {
             futures.add(CompletableFuture.supplyAsync(() -> {
                 Simulation sim = new Simulation(p);
-                int trades = 0;
-                for (int startTime : config.startTimes) {
-                    for (int searchTime : config.searchTimes) {
-                        for (int selectTime : config.selectTimes) {
-                            StocksTradeTimeFrame tf = new StocksTradeTimeFrame(startTime, searchTime, selectTime);
-                            for (int sIdx : stockSubset) {
-                                fastSimulate(pkg, sIdx, startTime, searchTime, sim, tf, false);
-                            }
-                            if (!tf.Trades().isEmpty()) {
-                                sim.AddTimeFrame(tf);
-                                trades += tf.Trades().size();
-                            }
-                        }
-                    }
-                }
-                double score = rescue ? (-100.0 + trades) : (trades > stockSubset.size() / 10 ? sim.calculateSimulationScore() : -100.0);
+                int trades = evaluateRaw(p, pkg, sim, stockSubset);
+                double score = rescue ? (-100.0 + trades) : (trades > Math.max(1, stockSubset.size() / 10) ? sim.calculateSimulationScore() : -100.0);
                 return new ParamScore(p, score);
             }));
         }
@@ -141,9 +131,9 @@ public class ParamOptimizer {
     }
 
     private List<Integer> getShuffledIndices(int count) {
-        List<Integer> indices = new java.util.ArrayList<>();
+        List<Integer> indices = new ArrayList<>();
         for (int i = 0; i < count; i++) indices.add(i);
-        java.util.Collections.shuffle(indices);
+        Collections.shuffle(indices);
         return indices;
     }
 
@@ -153,13 +143,13 @@ public class ParamOptimizer {
         return randomize(center, radius);
     }
 
-    private int evaluateRaw(SimulationParams params, SimulationDataPackage pkg, Simulation simulation) {
+    private int evaluateRaw(SimulationParams params, SimulationDataPackage pkg, Simulation simulation, List<Integer> stockSubset) {
         int tradeCount = 0;
         for (int startTime : config.startTimes) {
             for (int searchTime : config.searchTimes) {
                 for (int selectTime : config.selectTimes) {
                     StocksTradeTimeFrame timeFrame = new StocksTradeTimeFrame(startTime, searchTime, selectTime);
-                    for (int sIdx = 0; sIdx < pkg.stockCount; sIdx++) {
+                    for (int sIdx : stockSubset) {
                         fastSimulate(pkg, sIdx, startTime, searchTime, simulation, timeFrame, false);
                     }
                     if (!timeFrame.Trades().isEmpty()) {
@@ -175,22 +165,9 @@ public class ParamOptimizer {
     private double evaluate(SimulationParams params, SimulationDataPackage pkg, boolean collectMLData) {
         Simulation simulation = new Simulation(params);
         int tradeCount = 0;
-        for (int startTime : config.startTimes) {
-            for (int searchTime : config.searchTimes) {
-                for (int selectTime : config.selectTimes) {
-                    StocksTradeTimeFrame timeFrame = new StocksTradeTimeFrame(startTime, searchTime, selectTime);
-                    for (int sIdx = 0; sIdx < pkg.stockCount; sIdx++) {
-                        fastSimulate(pkg, sIdx, startTime, searchTime, simulation, timeFrame, collectMLData);
-                    }
-                    if (!timeFrame.Trades().isEmpty()) {
-                        simulation.AddTimeFrame(timeFrame);
-                        tradeCount += timeFrame.Trades().size();
-                    }
-                }
-            }
-        }
+        List<Integer> allStocks = java.util.stream.IntStream.range(0, pkg.stockCount).boxed().toList();
+        tradeCount = evaluateRaw(params, pkg, simulation, allStocks);
 
-        // Final sanity check for ML collection: if we still have no samples, force a pass over all data
         if (collectMLData && mlService.getSampleCount() < 100) {
             for (int sIdx = 0; sIdx < pkg.stockCount; sIdx++) {
                 fastSimulate(pkg, sIdx, pkg.daysCount - 60, pkg.daysCount - 60, simulation, new StocksTradeTimeFrame(0, 0, 0), true);
@@ -261,7 +238,10 @@ public class ParamOptimizer {
                 minRating,
                 maxRating,
                 maxCap,
-                0.10
+                0.10,
+                // Weights
+                random.nextDouble(), random.nextDouble(), random.nextDouble(),
+                random.nextDouble(), random.nextDouble(), random.nextDouble(), random.nextDouble()
         );
     }
 
@@ -294,7 +274,15 @@ public class ParamOptimizer {
                 minRating,
                 maxRating,
                 maxCap,
-                0.10
+                0.10,
+                // Weights
+                clamp(center.movingAvgGapWeight() + randomDouble(pctStep), 0.0, 1.0),
+                clamp(center.reversionToMeanWeight() + randomDouble(pctStep), 0.0, 1.0),
+                clamp(center.ratingWeight() + randomDouble(pctStep), 0.0, 1.0),
+                clamp(center.upwardIncRateWeight() + randomDouble(pctStep), 0.0, 1.0),
+                clamp(center.rvolWeight() + randomDouble(pctStep), 0.0, 1.0),
+                clamp(center.pegWeight() + randomDouble(pctStep), 0.0, 1.0),
+                clamp(center.volatilityCompressionWeight() + randomDouble(pctStep), 0.0, 1.0)
         );
     }
 

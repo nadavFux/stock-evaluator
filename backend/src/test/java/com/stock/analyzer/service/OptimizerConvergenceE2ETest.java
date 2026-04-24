@@ -86,6 +86,14 @@ public class OptimizerConvergenceE2ETest {
         config.startTimes = List.of(400);
         config.searchTimes = List.of(300);
         config.selectTimes = List.of(1);
+        
+        config.movingAvgGapWeight = new ArrayList<>(List.of(0.2));
+        config.reversionToMeanWeight = new ArrayList<>(List.of(0.15));
+        config.ratingWeight = new ArrayList<>(List.of(0.2));
+        config.upwardIncRateWeight = new ArrayList<>(List.of(0.15));
+        config.rvolWeight = new ArrayList<>(List.of(0.1));
+        config.pegWeight = new ArrayList<>(List.of(0.1));
+        config.volatilityCompressionWeight = new ArrayList<>(List.of(0.1));
 
         ParamOptimizer optimizer = new ParamOptimizer(config);
         SimulationParams optimizedParams = optimizer.optimize(stocks);

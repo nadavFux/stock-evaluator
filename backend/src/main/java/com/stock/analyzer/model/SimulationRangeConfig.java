@@ -35,6 +35,15 @@ public class SimulationRangeConfig {
     @NotEmpty public List<Integer> sectors;
     @NotEmpty public List<String> exchanges;
     @NotNull public String outputPath;
+    
+    // Weight Ranges
+    public List<Double> movingAvgGapWeight;
+    public List<Double> reversionToMeanWeight;
+    public List<Double> ratingWeight;
+    public List<Double> upwardIncRateWeight;
+    public List<Double> rvolWeight;
+    public List<Double> pegWeight;
+    public List<Double> volatilityCompressionWeight;
 
     public static SimulationRangeConfig load() {
         ObjectMapper mapper = new ObjectMapper(new YAMLFactory());
@@ -49,4 +58,3 @@ public class SimulationRangeConfig {
         }
     }
 }
-

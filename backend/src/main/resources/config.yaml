@@ -19,6 +19,16 @@ maxMarketCap: [2000000.0]
 minRatesOfAvgInc: [1.1]
 minRatings: [3.75]
 maxRatings: [4.6]
+riskFreeRate: [0.1]
+
+# Weight Ranges
+movingAvgGapWeight: [0.20]
+reversionToMeanWeight: [0.15]
+ratingWeight: [0.20]
+upwardIncRateWeight: [0.15]
+rvolWeight: [0.10]
+pegWeight: [0.10]
+volatilityCompressionWeight: [0.10]
 
 # Global Project Settings
 sectors: [10, 15, 20, 25, 30, 35, 40, 45, 50, 55, 60]

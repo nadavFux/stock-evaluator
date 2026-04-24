@@ -15,7 +15,8 @@ public class ParamOptimizerTest {
 
     @Test
     public void testSimulationScoreReflectsGains() {
-        SimulationParams params = new SimulationParams(0.95, 0.9, 1.1, 50, 1.05, 20, 10, 70, 0, 20, 0, 100, 1, 5, 1000000000, 0.0);
+        SimulationParams params = new SimulationParams(0.95, 0.9, 1.1, 50, 1.05, 20, 10, 70, 0, 20, 0, 100, 1, 5, 1000000000, 0.0,
+            0.2, 0.15, 0.2, 0.15, 0.1, 0.1, 0.1);
         Simulation sim = new Simulation(params);
         
         StocksTradeTimeFrame tf = new StocksTradeTimeFrame(100, 100, 100);
@@ -32,7 +33,8 @@ public class ParamOptimizerTest {
 
     @Test
     public void testRandomizeRespectsLogicalBounds() {
-        SimulationParams center = new SimulationParams(0.95, 0.9, 1.1, 50, 1.05, 20, 100, 70.0, 1000.0, 140, 1.1, 25, 3.75, 4.6, 2750.0, 0.05);
+        SimulationParams center = new SimulationParams(0.95, 0.9, 1.1, 50, 1.05, 20, 100, 70.0, 1000.0, 140, 1.1, 25, 3.75, 4.6, 2750.0, 0.05,
+            0.2, 0.15, 0.2, 0.15, 0.1, 0.1, 0.1);
         
         SimulationRangeConfig config = new SimulationRangeConfig();
         ParamOptimizer optimizer = new ParamOptimizer(config);

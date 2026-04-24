@@ -4,7 +4,6 @@ import com.stock.analyzer.model.SimulationDataPackage;
 import com.stock.analyzer.model.SimulationParams;
 import com.stock.analyzer.model.SimulationResult;
 import com.stock.analyzer.model.Stock;
-import com.stock.analyzer.model.ScoringWeights;
 import com.stock.analyzer.model.StockTrade;
 import com.stock.analyzer.service.MLModelService;
 
@@ -15,14 +14,12 @@ import java.util.List;
 public class Simulation {
     public final HashMap<String, StocksTradeTimeFrame> timeFrames;
     public final SimulationParams params;
-    public final ScoringWeights weights;
     public final String key;
     private MLModelService mlService;
     public boolean isTest = false;
 
     public Simulation(SimulationParams params) {
         this.params = params;
-        this.weights = ScoringWeights.defaultWeights();
         this.timeFrames = new HashMap<>();
         this.key = GenerateKey(params);
     }
@@ -54,13 +51,13 @@ public class Simulation {
         double pegScore = 1.0 - normalize(features[5], 0.0, 2.0);
         double volScore = 1.0 - normalize(features[6], 0.0, 0.05);
 
-        double heuristic = (maScore * weights.movingAvgGapWeight()) +
-               (reversionScore * weights.reversionToMeanWeight()) +
-               (ratingScore * weights.ratingWeight()) +
-               (momentumScore * weights.upwardIncRateWeight()) +
-               (rvolScore * weights.rvolWeight()) +
-               (pegScore * weights.pegWeight()) +
-               (volScore * weights.volatilityCompressionWeight());
+        double heuristic = (maScore * params.movingAvgGapWeight()) +
+               (reversionScore * params.reversionToMeanWeight()) +
+               (ratingScore * params.ratingWeight()) +
+               (momentumScore * params.upwardIncRateWeight()) +
+               (rvolScore * params.rvolWeight()) +
+               (pegScore * params.pegWeight()) +
+               (volScore * params.volatilityCompressionWeight());
 
         // 2. Calculate AI Prediction
         double aiPrediction = -1.0;
@@ -104,35 +101,35 @@ public class Simulation {
         if (pkg.ratings[stockIdx][dayIdx] > 4.0) maMax *= params.aboveAvgRatingPricePerc();
         
         double maScore = 1.0 - normalize(maGap, params.lowerPriceToLongAvgBuyIn(), maMax);
-        double scoreSoFar = maScore * weights.movingAvgGapWeight();
-        double remainingWeight = 1.0 - weights.movingAvgGapWeight();
+        double scoreSoFar = maScore * params.movingAvgGapWeight();
+        double remainingWeight = 1.0 - params.movingAvgGapWeight();
 
         if (scoreSoFar + remainingWeight < 0.65) return 0.0;
 
         double currentRating = pkg.ratings[stockIdx][dayIdx];
         double ratingScore = normalize(currentRating, params.minRating(), params.maxRating());
-        scoreSoFar += ratingScore * weights.ratingWeight();
-        remainingWeight -= weights.ratingWeight();
+        scoreSoFar += ratingScore * params.ratingWeight();
+        remainingWeight -= params.ratingWeight();
         if (scoreSoFar + remainingWeight < 0.65) return 0.0;
 
         double rvol = (pkg.avgVol30d[stockIdx][dayIdx] > 0) ? pkg.volumes[stockIdx][dayIdx] / pkg.avgVol30d[stockIdx][dayIdx] : 1.0;
         double rvolScore = normalize(rvol, 0.5, 2.0);
-        scoreSoFar += rvolScore * weights.rvolWeight();
-        remainingWeight -= weights.rvolWeight();
+        scoreSoFar += rvolScore * params.rvolWeight();
+        remainingWeight -= params.rvolWeight();
         if (scoreSoFar + remainingWeight < 0.65) return 0.0;
 
         double distFromMA = Math.abs(maGap - 1.0);
         double reversionScore = normalize(distFromMA, 0.0, 0.20);
-        scoreSoFar += reversionScore * weights.reversionToMeanWeight();
-        remainingWeight -= weights.reversionToMeanWeight();
+        scoreSoFar += reversionScore * params.reversionToMeanWeight();
+        remainingWeight -= params.reversionToMeanWeight();
         if (scoreSoFar + remainingWeight < 0.65) return 0.0;
 
         double avgNow = pkg.getAvg(stockIdx, dayIdx, params.timeFrameForUpwardLongAvg());
         double avgPrev = pkg.getAvg(stockIdx, Math.max(0, dayIdx - params.timeFrameForUpwardLongAvg()), params.timeFrameForUpwardLongAvg());
         double momentum = avgPrev > 0 ? avgNow / avgPrev : 1.0;
         double momentumScore = normalize(momentum, params.minRateOfAvgInc(), params.minRateOfAvgInc() * 1.3);
-        scoreSoFar += momentumScore * weights.upwardIncRateWeight();
-        remainingWeight -= weights.upwardIncRateWeight();
+        scoreSoFar += momentumScore * params.upwardIncRateWeight();
+        remainingWeight -= params.upwardIncRateWeight();
         if (scoreSoFar + remainingWeight < 0.65) return 0.0;
 
         double peg = 1.0;
@@ -143,13 +140,13 @@ public class Simulation {
             peg = epsGrowth > 0 ? pe / (epsGrowth * 100) : 2.0;
         }
         double pegScore = 1.0 - normalize(peg, 0.0, 2.0);
-        scoreSoFar += pegScore * weights.pegWeight();
-        remainingWeight -= weights.pegWeight();
+        scoreSoFar += pegScore * params.pegWeight();
+        remainingWeight -= params.pegWeight();
         if (scoreSoFar + remainingWeight < 0.65) return 0.0;
 
         double volatility = pkg.getVolatility(stockIdx, dayIdx, 20);
         double volScore = 1.0 - normalize(volatility, 0.0, 0.05);
-        scoreSoFar += volScore * weights.volatilityCompressionWeight();
+        scoreSoFar += volScore * params.volatilityCompressionWeight();
 
         return scoreSoFar;
     }

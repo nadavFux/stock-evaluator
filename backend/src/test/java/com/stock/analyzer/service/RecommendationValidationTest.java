@@ -66,6 +66,21 @@ public class RecommendationValidationTest {
         config.timeFrameForUpwardShortPrice = List.of(5);
         config.timeFrameForOscillator = List.of(5);
         config.outputPath = "output_test";
+        config.riskFreeRate = List.of(0.0);
+        config.startTimes = List.of(10);
+        config.searchTimes = List.of(10);
+        config.selectTimes = List.of(1);
+        config.minRatings = List.of(1.0);
+        config.maxRatings = List.of(5.0);
+        config.longMovingAvgTimes = List.of(5);
+
+        config.movingAvgGapWeight = List.of(0.2);
+        config.reversionToMeanWeight = List.of(0.15);
+        config.ratingWeight = List.of(0.2);
+        config.upwardIncRateWeight = List.of(0.15);
+        config.rvolWeight = List.of(0.1);
+        config.pegWeight = List.of(0.1);
+        config.volatilityCompressionWeight = List.of(0.1);
 
         ParamOptimizer optimizer = new ParamOptimizer(config);
         SimulationParams best = optimizer.optimize(List.of(stockA, stockB));
