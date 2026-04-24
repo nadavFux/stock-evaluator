@@ -34,7 +34,8 @@ public class ParamOptimizer {
         logger.info("Initial Score: {}", bestScore);
 
         boolean rescueMode = (bestScore == -100.0);
-        if (rescueMode) logger.info("Rescue Mode Active: Optimization will prioritize finding trades over Sharpe Ratio.");
+        if (rescueMode)
+            logger.info("Rescue Mode Active: Optimization will prioritize finding trades over Sharpe Ratio.");
 
         double radius = 0.2;
         int maxIterations = 10;
@@ -78,23 +79,23 @@ public class ParamOptimizer {
     }
 
     private ParamScore runGeneration(SimulationParams center, double bestScoreSoFar, double radius, int popSize, boolean rescue, SimulationDataPackage pkg) {
-        // --- STAGE 1: Discovery (All candidates on 10% of stocks) ---
+        // --- STAGE 1: Discovery (All candidates on 30% of stocks) ---
         List<SimulationParams> candidates = new java.util.ArrayList<>();
         for (int i = 0; i < popSize; i++) {
             candidates.add(generateCandidate(center, radius, i, rescue, -100.0));
         }
 
-        List<Integer> subset10 = getShuffledIndices(pkg.stockCount).subList(0, Math.max(1, pkg.stockCount / 10));
+        List<Integer> subset10 = getShuffledIndices(pkg.stockCount).subList(0, Math.max(1, pkg.stockCount / 3));
         List<ParamScore> stage1Results = evaluateParallel(candidates, subset10, pkg, rescue);
 
-        // --- STAGE 2: Refinement (Top 50 on 30% of stocks) ---
+        // --- STAGE 2: Refinement (Top 50 on 50% of stocks) ---
         List<SimulationParams> top50 = stage1Results.stream()
                 .sorted(Comparator.comparingDouble(ParamScore::score).reversed())
                 .limit(50)
                 .map(ParamScore::params)
                 .toList();
 
-        List<Integer> subset30 = getShuffledIndices(pkg.stockCount).subList(0, Math.max(1, pkg.stockCount / 3));
+        List<Integer> subset30 = getShuffledIndices(pkg.stockCount).subList(0, Math.max(1, pkg.stockCount / 2));
         List<ParamScore> stage2Results = evaluateParallel(top50, subset30, pkg, rescue);
 
         // --- STAGE 3: Validation (Top 10 on 100% of stocks) ---
@@ -132,7 +133,7 @@ public class ParamOptimizer {
                         }
                     }
                 }
-                double score = rescue ? (-100.0 + trades) : (trades > 10 ? sim.calculateSimulationScore() : -100.0);
+                double score = rescue ? (-100.0 + trades) : (trades > stockSubset.size() / 10 ? sim.calculateSimulationScore() : -100.0);
                 return new ParamScore(p, score);
             }));
         }
@@ -188,14 +189,14 @@ public class ParamOptimizer {
                 }
             }
         }
-        
+
         // Final sanity check for ML collection: if we still have no samples, force a pass over all data
         if (collectMLData && mlService.getSampleCount() < 100) {
             for (int sIdx = 0; sIdx < pkg.stockCount; sIdx++) {
-                fastSimulate(pkg, sIdx, pkg.daysCount - 60, pkg.daysCount - 60, simulation, new StocksTradeTimeFrame(0,0,0), true);
+                fastSimulate(pkg, sIdx, pkg.daysCount - 60, pkg.daysCount - 60, simulation, new StocksTradeTimeFrame(0, 0, 0), true);
             }
         }
-        
+
         return tradeCount > 10 ? simulation.calculateSimulationScore() : -100.0;
     }
 

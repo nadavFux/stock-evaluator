@@ -46,12 +46,13 @@ public class AnalysisService {
             try {
                 StatsCalculator.init(config);
 
-                Pipeline pipeline = new Pipeline(dataService, graphingService);
-
-                broadcast("PROGRESS", "Hydrating stocks...");
-                double minCap = (config.minMarketCap != null && !config.minMarketCap.isEmpty()) ? config.minMarketCap.get(0) : 50_000_000.0;
-                List<StockGraphState> allStocks = pipeline.processSectors(config.sectors, config.exchanges, minCap,
-                        msg -> broadcast("PROGRESS", msg));
+                List<StockGraphState> allStocks;
+                try (Pipeline pipeline = new Pipeline(dataService, graphingService)) {
+                    broadcast("PROGRESS", "Hydrating stocks...");
+                    double minCap = (config.minMarketCap != null && !config.minMarketCap.isEmpty()) ? config.minMarketCap.get(0) : 50_000_000.0;
+                    allStocks = pipeline.processSectors(config.sectors, config.exchanges, minCap,
+                            msg -> broadcast("PROGRESS", msg));
+                }
 
                 broadcast("STATUS", "Collected data for " + allStocks.size() + " stocks.");
 
@@ -132,11 +133,12 @@ public class AnalysisService {
                 logger.info("Loaded parameters from {} for backtest", paramsFile.getAbsolutePath());
 
                 StatsCalculator.init(config);
-                Pipeline pipeline = new Pipeline(dataService, graphingService);
-
-                List<StockGraphState> allStocks = pipeline.processSectors(config.sectors, config.exchanges,
-                        (config.minMarketCap != null && !config.minMarketCap.isEmpty()) ? config.minMarketCap.get(0) : 50_000_000.0,
-                        msg -> broadcast("PROGRESS", msg));
+                List<StockGraphState> allStocks;
+                try (Pipeline pipeline = new Pipeline(dataService, graphingService)) {
+                    allStocks = pipeline.processSectors(config.sectors, config.exchanges,
+                            (config.minMarketCap != null && !config.minMarketCap.isEmpty()) ? config.minMarketCap.get(0) : 50_000_000.0,
+                            msg -> broadcast("PROGRESS", msg));
+                }
 
                 broadcast("STATUS", "Simulating historical trades...");
 
@@ -214,11 +216,12 @@ public class AnalysisService {
                 logger.info("Loaded parameters from {} for backtest", paramsFile.getAbsolutePath());
 
                 StatsCalculator.init(config);
-                Pipeline pipeline = new Pipeline(dataService, graphingService);
-
-                List<StockGraphState> allStocks = pipeline.processSectors(config.sectors, config.exchanges,
-                        (config.minMarketCap != null && !config.minMarketCap.isEmpty()) ? config.minMarketCap.get(0) : 50_000_000.0,
-                        msg -> broadcast("PROGRESS", msg));
+                List<StockGraphState> allStocks;
+                try (Pipeline pipeline = new Pipeline(dataService, graphingService)) {
+                    allStocks = pipeline.processSectors(config.sectors, config.exchanges,
+                            (config.minMarketCap != null && !config.minMarketCap.isEmpty()) ? config.minMarketCap.get(0) : 50_000_000.0,
+                            msg -> broadcast("PROGRESS", msg));
+                }
 
                 broadcast("PROGRESS", "Generating recommendations...");
                 MLModelService mlService = getTrainedMLService(config);
