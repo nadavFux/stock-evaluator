@@ -41,10 +41,10 @@ public class ParamOptimizer {
         boolean rescueMode = (bestScore == -100.0);
         double radius = 0.25;
 
-        for (int gen = 1; gen <= 10 && radius >= 0.08; gen++) {
+        for (int gen = 1; gen <= 10 && radius >= 0.05; gen++) {
             logger.info("Generation {} (Radius: {})", gen, radius);
 
-            CandidateResult result = runGeneration(center, bestScore, radius, 300, rescueMode, dataPkg);
+            CandidateResult result = runGeneration(center, bestScore, radius, 500, rescueMode, dataPkg);
 
             if (result.score() > bestScore) {
                 if (rescueMode && result.score() > -90.0) {
@@ -96,14 +96,14 @@ public class ParamOptimizer {
             futures.add(CompletableFuture.supplyAsync(() -> {
                 Simulation sim = new Simulation(p);
                 Pair<Integer, Integer> stats = findTrades(sim, pkg, stockSubset);
-                
+
                 int trades = stats.getKey();
                 int frames = stats.getValue();
-                
+
                 // Enforce minimum trade density requirements
                 boolean hasVolume = trades > Math.max(15, (stockSubset.size() * frames) / 25);
                 double score = rescue ? (-100.0 + trades) : (hasVolume ? sim.calculateScore(frames) : -100.0);
-                
+
                 return new CandidateResult(p, score);
             }));
         }
@@ -164,7 +164,7 @@ public class ParamOptimizer {
 
                     if (price < (ma * sim.params.sellCutOffPerc()) || (curr == absoluteLimit - 1)) {
                         sim.recordTrade((price - buyPrice) / buyPrice, j);
-                        i = curr; 
+                        i = curr;
                         break;
                     }
                 }
@@ -187,18 +187,18 @@ public class ParamOptimizer {
                 clamp(c.sellCutOffPerc() + rand(r), 0.1, 0.99),
                 clamp(c.lowerPriceToLongAvgBuyIn() + rand(r), 0.1, 2.0),
                 clamp(c.higherPriceToLongAvgBuyIn() + rand(r), 0.1, 3.0),
-                clampInt(c.timeFrameForUpwardLongAvg() + randInt((int)(20*r)), 2, 500),
+                clampInt(c.timeFrameForUpwardLongAvg() + randInt((int) (20 * r)), 2, 500),
                 clamp(c.aboveAvgRatingPricePerc() + rand(r), 0.1, 5.0),
-                clampInt(c.timeFrameForUpwardShortPrice() + randInt((int)(20*r)), 1, 100),
-                clampInt(c.timeFrameForOscillator() + randInt((int)(100*r)), 2, 500),
-                clamp(c.maxRSI() + rand(20*r), 0.0, 100.0),
-                Math.max(0, c.minMarketCap() * (1 + rand(2*r))),
-                clampInt(c.longMovingAvgTime() + randInt((int)(100*r)), 10, 1000),
+                clampInt(c.timeFrameForUpwardShortPrice() + randInt((int) (20 * r)), 1, 100),
+                clampInt(c.timeFrameForOscillator() + randInt((int) (100 * r)), 2, 500),
+                clamp(c.maxRSI() + rand(20 * r), 0.0, 100.0),
+                Math.max(0, c.minMarketCap() * (1 + rand(2 * r))),
+                clampInt(c.longMovingAvgTime() + randInt((int) (100 * r)), 10, 1000),
                 clamp(c.minRateOfAvgInc() + rand(r), 0.0, 5.0),
-                clampInt(c.maxPERatio() + randInt((int)(50*r)), 0, 1000),
-                clamp(c.minRating() + rand(4*r), 0.0, 4.9),
-                clamp(c.maxRating() + rand(4*r), 3.0, 5.0),
-                Math.max(1000, c.maxMarketCap() * (1 + rand(2*r))),
+                clampInt(c.maxPERatio() + randInt((int) (50 * r)), 0, 1000),
+                clamp(c.minRating() + rand(4 * r), 0.0, 4.9),
+                clamp(c.maxRating() + rand(4 * r), 3.0, 5.0),
+                Math.max(1000, c.maxMarketCap() * (1 + rand(2 * r))),
                 0.10,
                 clamp(c.buyThreshold() + rand(r), 0.4, 0.95),
                 clamp(c.movingAvgGapWeight() + rand(r), 0.0, 1.0),
@@ -223,10 +223,21 @@ public class ParamOptimizer {
         );
     }
 
-    private double rand(double s) { return (random.nextDouble() * 2 * s) - s; }
-    private int randInt(int s) { return s <= 0 ? 0 : random.nextInt((s * 2) + 1) - s; }
-    private double clamp(double v, double min, double max) { return Math.max(min, Math.min(max, v)); }
-    private int clampInt(int v, int min, int max) { return Math.max(min, Math.min(max, v)); }
+    private double rand(double s) {
+        return (random.nextDouble() * 2 * s) - s;
+    }
+
+    private int randInt(int s) {
+        return s <= 0 ? 0 : random.nextInt((s * 2) + 1) - s;
+    }
+
+    private double clamp(double v, double min, double max) {
+        return Math.max(min, Math.min(max, v));
+    }
+
+    private int clampInt(int v, int min, int max) {
+        return Math.max(min, Math.min(max, v));
+    }
 
     private List<Integer> getShuffledIndices(int count) {
         List<Integer> idx = new ArrayList<>();
@@ -235,5 +246,6 @@ public class ParamOptimizer {
         return idx;
     }
 
-    private record CandidateResult(SimulationParams params, double score) {}
+    private record CandidateResult(SimulationParams params, double score) {
+    }
 }

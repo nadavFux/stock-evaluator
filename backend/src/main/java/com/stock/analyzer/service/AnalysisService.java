@@ -12,7 +12,9 @@ import org.springframework.messaging.simp.SimpMessagingTemplate;
 import org.springframework.stereotype.Service;
 
 import java.io.File;
-import java.util.*;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 
 /**
@@ -42,7 +44,7 @@ public class AnalysisService {
             try {
                 StatsCalculator.init(config);
                 List<StockGraphState> allStocks;
-                
+
                 try (Pipeline pipeline = new Pipeline(dataService, graphingService)) {
                     broadcast("PROGRESS", "Hydrating stocks...");
                     double minCap = (config.minMarketCap != null && !config.minMarketCap.isEmpty()) ? config.minMarketCap.get(0) : 50_000_000.0;
@@ -72,7 +74,7 @@ public class AnalysisService {
                 for (int i = 0; i < pkg.stockCount; i++) {
                     SimulationResult res = inferenceSim.evaluateStep(pkg, i, pkg.daysCount - 1);
                     if (res.heuristicScore() > bestParams.buyThreshold()) {
-                        List<TradePoint> trades = List.of(new TradePoint(pkg.dates[i][pkg.daysCount-1], pkg.closePrices[i][pkg.daysCount-1], "BUY"));
+                        List<TradePoint> trades = List.of(new TradePoint(pkg.dates[i][pkg.daysCount - 1], pkg.closePrices[i][pkg.daysCount - 1], "BUY"));
                         recommendations.add(new StockCheckResult(allStocks.get(i), res, trades));
                     }
                 }
@@ -99,16 +101,17 @@ public class AnalysisService {
 
             try {
                 SimulationParams params = new ObjectMapper(new YAMLFactory()).readValue(new File(config.outputPath + File.separator + "best_params.yaml"), SimulationParams.class);
-                
+
                 List<StockGraphState> allStocks;
                 try (Pipeline pipeline = new Pipeline(dataService, graphingService)) {
-                    allStocks = pipeline.processSectors(config.sectors, config.exchanges, 50_000_000.0, msg -> {});
+                    allStocks = pipeline.processSectors(config.sectors, config.exchanges, 50_000_000.0, msg -> {
+                    });
                 }
 
                 Simulation sim = new Simulation(params);
                 sim.setMLService(getTrainedMLService(config));
                 SimulationDataPackage pkg = new SimulationDataPackage(allStocks);
-                
+
                 List<StockTrade> allTrades = new ArrayList<>();
                 int backtestDays = 100;
 
@@ -148,6 +151,49 @@ public class AnalysisService {
         });
     }
 
+    public void runOpportunities(SimulationRangeConfig config) {
+        if (isRunning) return;
+
+        CompletableFuture.runAsync(() -> {
+            isRunning = true;
+            broadcast("STATUS", "Searching for current opportunities...");
+
+            try {
+                // Load best params
+                SimulationParams params = new ObjectMapper(new YAMLFactory()).readValue(new File(config.outputPath + File.separator + "best_params.yaml"), SimulationParams.class);
+
+                StatsCalculator.init(config);
+                List<StockGraphState> allStocks;
+                try (Pipeline pipeline = new Pipeline(dataService, graphingService)) {
+                    allStocks = pipeline.processSectors(config.sectors, config.exchanges, 50_000_000.0, msg -> broadcast("PROGRESS", msg));
+                }
+
+                Simulation inferenceSim = new Simulation(params);
+                inferenceSim.setMLService(getTrainedMLService(config));
+                SimulationDataPackage pkg = new SimulationDataPackage(allStocks);
+
+                List<StockCheckResult> recommendations = new ArrayList<>();
+                for (int i = 0; i < pkg.stockCount; i++) {
+                    SimulationResult res = inferenceSim.evaluateStep(pkg, i, pkg.daysCount - 1);
+                    if (res.heuristicScore() > params.buyThreshold()) {
+                        List<TradePoint> trades = List.of(new TradePoint(pkg.dates[i][pkg.daysCount - 1], pkg.closePrices[i][pkg.daysCount - 1], "BUY"));
+                        recommendations.add(new StockCheckResult(allStocks.get(i), res, trades));
+                    }
+                }
+
+                recommendations.sort((a, b) -> Double.compare(b.result().heuristicScore(), a.result().heuristicScore()));
+                broadcast("RESULTS", recommendations.stream().limit(100).toList());
+                broadcast("STATUS", "Opportunity scan complete.");
+
+            } catch (Exception e) {
+                logger.error("Opportunity scan failed", e);
+                broadcast("ERROR", e.getMessage());
+            } finally {
+                isRunning = false;
+            }
+        });
+    }
+
     private MLModelService getTrainedMLService(SimulationRangeConfig config) {
         MLModelService service = new MLModelService();
         service.loadModel(config.outputPath + File.separator + "model");
@@ -159,5 +205,7 @@ public class AnalysisService {
         messagingTemplate.convertAndSend("/topic/updates", message);
     }
 
-    public boolean isRunning() { return isRunning; }
+    public boolean isRunning() {
+        return isRunning;
+    }
 }
