@@ -73,13 +73,13 @@ public class ParamOptimizer {
                 config.timeFrameForOscillator.get(0), config.maxRSI.get(0), config.minMarketCap.get(0), config.longMovingAvgTimes.get(0),
                 config.minRatesOfAvgInc.get(0), config.maxPERatios.get(0), config.minRatings.get(0), config.maxRatings.get(0), config.maxMarketCap.get(0),
                 config.riskFreeRate.get(0),
-                config.movingAvgGapWeight == null ? 0.2 : config.movingAvgGapWeight.get(0),
-                config.reversionToMeanWeight == null ? 0.15 : config.reversionToMeanWeight.get(0),
-                config.ratingWeight == null ? 0.2 : config.ratingWeight.get(0),
-                config.upwardIncRateWeight == null ? 0.15 : config.upwardIncRateWeight.get(0),
-                config.rvolWeight == null ? 0.1 : config.rvolWeight.get(0),
-                config.pegWeight == null ? 0.1 : config.pegWeight.get(0),
-                config.volatilityCompressionWeight == null ? 0.1 : config.volatilityCompressionWeight.get(0)
+                config.movingAvgGapWeight == null || config.movingAvgGapWeight.isEmpty() ? 0.2 : config.movingAvgGapWeight.get(0),
+                config.reversionToMeanWeight == null || config.reversionToMeanWeight.isEmpty() ? 0.15 : config.reversionToMeanWeight.get(0),
+                config.ratingWeight == null || config.ratingWeight.isEmpty() ? 0.2 : config.ratingWeight.get(0),
+                config.upwardIncRateWeight == null || config.upwardIncRateWeight.isEmpty() ? 0.15 : config.upwardIncRateWeight.get(0),
+                config.rvolWeight == null || config.rvolWeight.isEmpty() ? 0.1 : config.rvolWeight.get(0),
+                config.pegWeight == null || config.pegWeight.isEmpty() ? 0.1 : config.pegWeight.get(0),
+                config.volatilityCompressionWeight == null || config.volatilityCompressionWeight.isEmpty() ? 0.1 : config.volatilityCompressionWeight.get(0)
         );
     }
 
@@ -124,7 +124,7 @@ public class ParamOptimizer {
             futures.add(CompletableFuture.supplyAsync(() -> {
                 Simulation sim = new Simulation(p);
                 int trades = evaluateRaw(p, pkg, sim, stockSubset);
-                double score = rescue ? (-100.0 + trades) : (trades > Math.max(1, stockSubset.size() / 10) ? sim.calculateSimulationScore() : -100.0);
+                double score = rescue ? (-100.0 + trades) : (trades > Math.max(10, stockSubset.size() / 10) ? sim.calculateSimulationScore() : -100.0);
                 return new ParamScore(p, score);
             }));
         }
@@ -151,7 +151,7 @@ public class ParamOptimizer {
                 for (int selectTime : config.selectTimes) {
                     StocksTradeTimeFrame timeFrame = new StocksTradeTimeFrame(startTime, searchTime, selectTime);
                     for (int sIdx : stockSubset) {
-                        fastSimulate(pkg, sIdx, startTime, searchTime, simulation, timeFrame, false);
+                        fastSimulate(pkg, sIdx, startTime, searchTime, selectTime, simulation, timeFrame, false);
                     }
                     if (!timeFrame.Trades().isEmpty()) {
                         simulation.AddTimeFrame(timeFrame);
@@ -166,21 +166,37 @@ public class ParamOptimizer {
     private double evaluate(SimulationParams params, SimulationDataPackage pkg, boolean collectMLData) {
         Simulation simulation = new Simulation(params);
         int tradeCount = 0;
-        List<Integer> allStocks = java.util.stream.IntStream.range(0, pkg.stockCount).boxed().toList();
-        tradeCount = evaluateRaw(params, pkg, simulation, allStocks);
-
+        for (int startTime : config.startTimes) {
+            for (int searchTime : config.searchTimes) {
+                for (int selectTime : config.selectTimes) {
+                    StocksTradeTimeFrame timeFrame = new StocksTradeTimeFrame(startTime, searchTime, selectTime);
+                    for (int sIdx = 0; sIdx < pkg.stockCount; sIdx++) {
+                        fastSimulate(pkg, sIdx, startTime, searchTime, selectTime, simulation, timeFrame, collectMLData);
+                    }
+                    if (!timeFrame.Trades().isEmpty()) {
+                        simulation.AddTimeFrame(timeFrame);
+                        tradeCount += timeFrame.Trades().size();
+                    }
+                }
+            }
+        }
+        
         if (collectMLData && mlService.getSampleCount() < 100) {
             for (int sIdx = 0; sIdx < pkg.stockCount; sIdx++) {
-                fastSimulate(pkg, sIdx, pkg.daysCount - 60, pkg.daysCount - 60, simulation, new StocksTradeTimeFrame(0, 0, 0), true);
+                fastSimulate(pkg, sIdx, pkg.daysCount - 60, 60, 0, simulation, new StocksTradeTimeFrame(0, 0, 0), true);
             }
         }
 
-        return tradeCount > 10 ? simulation.calculateSimulationScore() : -100.0;
+        return tradeCount > pkg.stockCount / 10 ? simulation.calculateSimulationScore() : -100.0;
     }
 
-    private void fastSimulate(SimulationDataPackage pkg, int sIdx, int daysBack, int searchTime, Simulation sim, StocksTradeTimeFrame tf, boolean ml) {
+    private void fastSimulate(SimulationDataPackage pkg, int sIdx, int daysBack, int searchTime, int selectTime, Simulation sim, StocksTradeTimeFrame tf, boolean ml) {
         int timeStart = Math.max(0, pkg.daysCount - daysBack);
         int searchLimit = Math.min(timeStart + searchTime, pkg.daysCount);
+        
+        // The absolute limit for a trade to finish is either the end of data 
+        // OR timeStart + searchTime + selectTime (if selectTime > 0)
+        int absoluteLimit = (selectTime > 0) ? Math.min(timeStart + searchTime + selectTime, pkg.daysCount) : pkg.daysCount;
 
         for (int i = timeStart; i < searchLimit; i++) {
             double heuristic = sim.getFastHeuristic(pkg, sIdx, i);
@@ -203,13 +219,17 @@ public class ParamOptimizer {
                     mlService.collectSample(new TrainingSample(sequence, gain30d));
                 }
 
-                for (int j = 1; j < searchLimit - i; j++) {
-                    double currentPrice = pkg.closePrices[sIdx][i + j];
-                    double currentMA = pkg.getAvg(sIdx, i + j, sim.params.longMovingAvgTime());
-                    if (currentPrice < (currentMA * cutOff) || (j == searchLimit - i - 1)) {
+                // Simulate trade hold period - now allowed to run until absoluteLimit
+                for (int j = 1; j < absoluteLimit - i; j++) {
+                    int currentIdx = i + j;
+                    double currentPrice = pkg.closePrices[sIdx][currentIdx];
+                    double currentMA = pkg.getAvg(sIdx, currentIdx, sim.params.longMovingAvgTime());
+                    
+                    // Exit at stop-loss OR at the end of the allowed period
+                    if (currentPrice < (currentMA * cutOff) || (currentIdx == absoluteLimit - 1)) {
                         double gain = (currentPrice - buyPrice) / buyPrice;
-                        tf.AddRow(new StockTrade(pkg.tickers[sIdx], gain, daysBack - i + timeStart, j, buyPrice / buyMA, pkg.caps[sIdx][i], pkg.dates[sIdx][i]));
-                        i += (j - 1);
+                        tf.AddRow(new StockTrade(pkg.tickers[sIdx], gain, pkg.daysCount - i, j, buyPrice / buyMA, pkg.caps[sIdx][i], pkg.dates[sIdx][i]));
+                        i = currentIdx; // Skip days where we were in the trade
                         break;
                     }
                 }
