@@ -33,17 +33,6 @@ public class AnalysisController {
         }
     }
 
-    @PostMapping("/opportunities")
-    public Map<String, String> runOpportunities(@RequestBody SimulationRangeConfig config) {
-        try {
-            analysisService.runOpportunities(config);
-            return Map.of("status", "Opportunities started");
-        } catch (Exception e) {
-            return Map.of("error", e.getMessage());
-        }
-    }
-
-
     @GetMapping("/status")
     public Map<String, Object> status() {
         return Map.of("isRunning", analysisService.isRunning());
