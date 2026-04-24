@@ -6,11 +6,7 @@ import com.stock.analyzer.model.*;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import java.util.ArrayList;
-import java.util.Collections;
-import java.util.Comparator;
-import java.util.List;
-import java.util.Random;
+import java.util.*;
 import java.util.concurrent.CompletableFuture;
 
 public class ParamOptimizer {
@@ -77,8 +73,13 @@ public class ParamOptimizer {
                 config.timeFrameForOscillator.get(0), config.maxRSI.get(0), config.minMarketCap.get(0), config.longMovingAvgTimes.get(0),
                 config.minRatesOfAvgInc.get(0), config.maxPERatios.get(0), config.minRatings.get(0), config.maxRatings.get(0), config.maxMarketCap.get(0),
                 config.riskFreeRate.get(0),
-                config.movingAvgGapWeight.get(0), config.reversionToMeanWeight.get(0), config.ratingWeight.get(0),
-                config.upwardIncRateWeight.get(0), config.rvolWeight.get(0), config.pegWeight.get(0), config.volatilityCompressionWeight.get(0)
+                config.movingAvgGapWeight == null ? 0.2 : config.movingAvgGapWeight.get(0),
+                config.reversionToMeanWeight == null ? 0.15 : config.reversionToMeanWeight.get(0),
+                config.ratingWeight == null ? 0.2 : config.ratingWeight.get(0),
+                config.upwardIncRateWeight == null ? 0.15 : config.upwardIncRateWeight.get(0),
+                config.rvolWeight == null ? 0.1 : config.rvolWeight.get(0),
+                config.pegWeight == null ? 0.1 : config.pegWeight.get(0),
+                config.volatilityCompressionWeight == null ? 0.1 : config.volatilityCompressionWeight.get(0)
         );
     }
 
@@ -110,7 +111,7 @@ public class ParamOptimizer {
                 .toList();
 
         List<Integer> allIndices = java.util.stream.IntStream.range(0, pkg.stockCount).boxed().toList();
-        List<ParamScore> finalResults = evaluateParallel(top10, allIndices, pkg, false); 
+        List<ParamScore> finalResults = evaluateParallel(top10, allIndices, pkg, false);
 
         return finalResults.stream()
                 .max(Comparator.comparingDouble(ParamScore::score))

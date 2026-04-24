@@ -298,7 +298,8 @@ const ConfigPanel: React.FC<ConfigPanelProps> = ({ config, onSave, onClose, prof
             'timeFrameForUpwardLongAvg', 'timeFrameForOscillator', 'maxPERatios',
             'aboveAvgRatingPricePerc', 'timeFrameForUpwardShortPrice', 'maxRSI',
             'minMarketCap', 'maxMarketCap', 'minRatesOfAvgInc', 'minRatings', 'maxRatings',
-            'riskFreeRate'
+            'riskFreeRate', 'movingAvgGapWeight', 'reversionToMeanWeight', 'ratingWeight',
+            'upwardIncRateWeight', 'rvolWeight', 'pegWeight', 'volatilityCompressionWeight'
         ];
         fields.forEach(f => {
             if (Array.isArray(localConfig[f]) && localConfig[f].length > 0) {

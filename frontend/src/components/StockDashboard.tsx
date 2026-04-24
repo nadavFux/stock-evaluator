@@ -61,6 +61,13 @@ const StockDashboard: React.FC = () => {
             minRatings: [3.75],
             maxRatings: [4.6],
             riskFreeRate: [0.05],
+            movingAvgGapWeight: [0.20],
+            reversionToMeanWeight: [0.15],
+            ratingWeight: [0.20],
+            upwardIncRateWeight: [0.15],
+            rvolWeight: [0.10],
+            pegWeight: [0.10],
+            volatilityCompressionWeight: [0.10],
             sectors: [101010, 101020, 151010, 151020, 151030, 151050],
             exchanges: ["TASE", "NYSE", "NasdaqGS"],
             outputPath: "output"
