@@ -13,10 +13,7 @@ public record SimulationResult(
     double q50,
     double q95
 ) implements Serializable {
-    public SimulationResult(double heuristicScore, double aiPredictedReturn) {
-        this(heuristicScore, aiPredictedReturn, 0.0, 0.0, 0.0, null, 0.0, 0.0, 0.0);
-    }
-
+    
     public SimulationResult(double heuristicScore, double aiPredictedReturn, double rvol, double volatility, double momentum, double[] features) {
         this(heuristicScore, aiPredictedReturn, rvol, volatility, momentum, features, 0.0, 0.0, 0.0);
     }

@@ -29,50 +29,33 @@ public class ParamOptimizer {
         logger.info("Starting Iterative Random Search with Zoom Optimization...");
         SimulationDataPackage dataPkg = new SimulationDataPackage(allStocks);
 
-        SimulationParams centerParams = new SimulationParams(
-                config.sellCutOffPerc.get(0), config.lowerPriceToLongAvgBuyIn.get(0), config.higherPriceToLongAvgBuyIn.get(0),
-                config.timeFrameForUpwardLongAvg.get(0), config.aboveAvgRatingPricePerc.get(0), config.timeFrameForUpwardShortPrice.get(0),
-                config.timeFrameForOscillator.get(0), config.maxRSI.get(0), config.minMarketCap.get(0), config.longMovingAvgTimes.get(0),
-                config.minRatesOfAvgInc.get(0), config.maxPERatios.get(0), config.minRatings.get(0), config.maxRatings.get(0), config.maxMarketCap.get(0),
-                config.riskFreeRate.get(0)
-        );
+        SimulationParams centerParams = centerParamsFromConfig();
         double bestScore = evaluate(centerParams, dataPkg, false);
         logger.info("Initial Score: {}", bestScore);
 
+        boolean rescueMode = (bestScore == -100.0);
+        if (rescueMode) logger.info("Rescue Mode Active: Optimization will prioritize finding trades over Sharpe Ratio.");
+
         double radius = 0.2;
-        int iterations = 0;
-        int populationSize = 50;
+        int maxIterations = 10;
+        int populationSize = 300;
 
-        while (radius >= 0.02 && iterations < 10) {
-            iterations++;
-            logger.info("Starting Generation {} with radius {}", iterations, radius);
+        for (int iter = 1; iter <= maxIterations && radius >= 0.02; iter++) {
+            logger.info("Starting Generation {} with radius {}", iter, radius);
 
-            List<CompletableFuture<ParamScore>> futures = new java.util.ArrayList<>();
+            ParamScore result = runGeneration(centerParams, bestScore, radius, populationSize, rescueMode, dataPkg);
 
-            // Add current center to prevent regression
-            final SimulationParams currentCenter = centerParams;
-            final double currentBestScore = bestScore;
-            futures.add(CompletableFuture.supplyAsync(() -> new ParamScore(currentCenter, evaluate(currentCenter, dataPkg, false))));
-
-            // Generate N-1 random neighbors
-            for (int i = 0; i < populationSize - 1; i++) {
-                SimulationParams randParams = randomize(centerParams, radius);
-                futures.add(CompletableFuture.supplyAsync(() -> new ParamScore(randParams, evaluate(randParams, dataPkg, false))));
-            }
-
-            ParamScore bestInGen = CompletableFuture.allOf(futures.toArray(new CompletableFuture[0]))
-                    .thenApply(v -> futures.stream()
-                            .map(CompletableFuture::join)
-                            .max(Comparator.comparingDouble(ParamScore::score))
-                            .orElse(new ParamScore(currentCenter, currentBestScore)))
-                    .join();
-
-            if (bestInGen.score() > bestScore) {
-                bestScore = bestInGen.score();
-                centerParams = bestInGen.params();
-                logger.info("Generation {} improved best score to {}", iterations, bestScore);
+            if (result.score() > bestScore) {
+                if (rescueMode && result.score() > -90.0) {
+                    rescueMode = false;
+                    logger.info("Generation {} exited Rescue Mode with score {}", iter, result.score());
+                } else {
+                    logger.info("Generation {} improved best score from {} to {}", iter, bestScore, result.score());
+                }
+                bestScore = result.score();
+                centerParams = result.params();
             } else {
-                logger.info("Generation {} found no better parameters.", iterations);
+                logger.info("Generation {} found no better parameters. Center score: {}", iter, bestScore);
             }
 
             com.stock.analyzer.core.StatsCalculator.clearCache();
@@ -81,43 +64,91 @@ public class ParamOptimizer {
 
         logger.info("Optimization complete. Final evaluation and ML data collection...");
         evaluate(centerParams, dataPkg, true);
-
         return centerParams;
+    }
+
+    private SimulationParams centerParamsFromConfig() {
+        return new SimulationParams(
+                config.sellCutOffPerc.get(0), config.lowerPriceToLongAvgBuyIn.get(0), config.higherPriceToLongAvgBuyIn.get(0),
+                config.timeFrameForUpwardLongAvg.get(0), config.aboveAvgRatingPricePerc.get(0), config.timeFrameForUpwardShortPrice.get(0),
+                config.timeFrameForOscillator.get(0), config.maxRSI.get(0), config.minMarketCap.get(0), config.longMovingAvgTimes.get(0),
+                config.minRatesOfAvgInc.get(0), config.maxPERatios.get(0), config.minRatings.get(0), config.maxRatings.get(0), config.maxMarketCap.get(0),
+                config.riskFreeRate.get(0)
+        );
+    }
+
+    private ParamScore runGeneration(SimulationParams center, double bestScoreSoFar, double radius, int popSize, boolean rescue, SimulationDataPackage pkg) {
+        final java.util.concurrent.atomic.AtomicReference<ParamScore> bestInGen = 
+                new java.util.concurrent.atomic.AtomicReference<>(new ParamScore(center, bestScoreSoFar));
+        
+        List<CompletableFuture<Void>> futures = new java.util.ArrayList<>();
+        for (int i = 0; i < popSize; i++) {
+            final int idx = i;
+            futures.add(CompletableFuture.runAsync(() -> {
+                SimulationParams p = generateCandidate(center, radius, idx, rescue, bestInGen.get().score());
+                Simulation sim = new Simulation(p);
+                int trades = evaluateRaw(p, pkg, sim);
+                double score = rescue ? (-100.0 + trades) : (trades > 10 ? sim.calculateSimulationScore() : -100.0);
+                
+                bestInGen.accumulateAndGet(new ParamScore(p, score), (old, next) -> next.score() > old.score() ? next : old);
+            }));
+        }
+        CompletableFuture.allOf(futures.toArray(new CompletableFuture[0])).join();
+        return bestInGen.get();
+    }
+
+    private SimulationParams generateCandidate(SimulationParams center, double radius, int idx, boolean rescue, double genBestScore) {
+        if (idx == 0) return center;
+        if (rescue && genBestScore == -100.0) return uniformRandom();
+        return randomize(center, radius);
+    }
+
+    private int evaluateRaw(SimulationParams params, SimulationDataPackage pkg, Simulation simulation) {
+        int tradeCount = 0;
+        for (int startTime : config.startTimes) {
+            for (int searchTime : config.searchTimes) {
+                for (int selectTime : config.selectTimes) {
+                    StocksTradeTimeFrame timeFrame = new StocksTradeTimeFrame(startTime, searchTime, selectTime);
+                    for (int sIdx = 0; sIdx < pkg.stockCount; sIdx++) {
+                        fastSimulate(pkg, sIdx, startTime, searchTime, simulation, timeFrame, false);
+                    }
+                    if (!timeFrame.Trades().isEmpty()) {
+                        simulation.AddTimeFrame(timeFrame);
+                        tradeCount += timeFrame.Trades().size();
+                    }
+                }
+            }
+        }
+        return tradeCount;
     }
 
     private double evaluate(SimulationParams params, SimulationDataPackage pkg, boolean collectMLData) {
         Simulation simulation = new Simulation(params);
-        int count = 0;
         int tradeCount = 0;
-        int stocksProcessed = 0;
-        int pruningCheckpoint = pkg.stockCount / 4; // Check after 25%
-
         for (int startTime : config.startTimes) {
             for (int searchTime : config.searchTimes) {
                 for (int selectTime : config.selectTimes) {
                     StocksTradeTimeFrame timeFrame = new StocksTradeTimeFrame(startTime, searchTime, selectTime);
                     for (int sIdx = 0; sIdx < pkg.stockCount; sIdx++) {
                         fastSimulate(pkg, sIdx, startTime, searchTime, simulation, timeFrame, collectMLData);
-
-                        // Statistical Pruning
-                        stocksProcessed++;
-                        if (!collectMLData && stocksProcessed == pruningCheckpoint && stocksProcessed > 10) {
-                            double currentScore = simulation.calculateSimulationScore();
-                            if (currentScore < -20.0) {
-                                return -100.0; // Early exit for bad parameter set
-                            }
-                        }
                     }
                     if (!timeFrame.Trades().isEmpty()) {
                         simulation.AddTimeFrame(timeFrame);
-                        count++;
                         tradeCount += timeFrame.Trades().size();
                     }
                 }
             }
         }
-        System.out.println("Finished evaluation. Total trades: " + tradeCount);
-        return tradeCount > 1000 ? simulation.calculateSimulationScore() : -100.0;
+        
+        // Final sanity check for ML collection: if we still have no samples, force a pass over all data
+        if (collectMLData && mlService.getSampleCount() < 100) {
+            for (int sIdx = 0; sIdx < pkg.stockCount; sIdx++) {
+                // Wide window for ML data collection
+                fastSimulate(pkg, sIdx, pkg.daysCount - 60, pkg.daysCount - 60, simulation, new StocksTradeTimeFrame(0,0,0), true);
+            }
+        }
+        
+        return tradeCount > 10 ? simulation.calculateSimulationScore() : -100.0;
     }
 
     private void fastSimulate(SimulationDataPackage pkg, int sIdx, int daysBack, int searchTime, Simulation sim, StocksTradeTimeFrame tf, boolean ml) {
@@ -132,24 +163,13 @@ public class ParamOptimizer {
                 if (buyMA == 0) continue;
                 double cutOff = (buyPrice / buyMA) * sim.params.sellCutOffPerc();
 
-                // Collection for ML
+                // Collection for ML - Optimized to use SimulationDataPackage
                 if (ml && i >= timeStart + 30 && i + 30 < pkg.daysCount) {
                     float[][] sequence = new float[30][12];
                     for (int k = 0; k < 30; k++) {
                         int dayOffset = i - 29 + k;
-                        double[] features = sim.extractFeatures(
-                                java.util.Arrays.stream(pkg.closePrices[sIdx]).boxed().toList(),
-                                java.util.Arrays.asList(new Double[pkg.daysCount]), // Placeholder
-                                dayOffset,
-                                new Stock(pkg.tickers[sIdx], "name", pkg.tickers[sIdx], "exchange", "date", 0.0f, 0.0, 0.0, "id", "other", 0.0),
-                                java.util.Arrays.stream(pkg.epss[sIdx]).boxed().toList(),
-                                java.util.Arrays.stream(pkg.ratings[sIdx]).boxed().toList(),
-                                java.util.Arrays.stream(pkg.caps[sIdx]).boxed().toList(),
-                                java.util.Arrays.stream(pkg.volumes[sIdx]).boxed().toList()
-                        );
-                        if (features != null) {
-                            for (int f = 0; f < 12; f++) sequence[k][f] = (float) features[f];
-                        }
+                        double[] features = sim.extractFeaturesFast(pkg, sIdx, dayOffset);
+                        for (int f = 0; f < 12; f++) sequence[k][f] = (float) features[f];
                     }
 
                     double priceIn30Days = pkg.closePrices[sIdx][i + 30];
@@ -174,6 +194,32 @@ public class ParamOptimizer {
         }
     }
 
+    public SimulationParams uniformRandom() {
+        double minCap = 1000.0 + random.nextDouble() * 100000000.0;
+        double maxCap = minCap + 1000000.0 + random.nextDouble() * 10000000000.0;
+        double minRating = random.nextDouble() * 4.9;
+        double maxRating = minRating + 0.1 + random.nextDouble() * (5.0 - minRating - 0.1);
+
+        return new SimulationParams(
+                0.5 + random.nextDouble() * 0.5,
+                0.1 + random.nextDouble() * 0.9,
+                1.0 + random.nextDouble() * 0.5,
+                5 + random.nextInt(195),
+                0.5 + random.nextDouble() * 1.5,
+                1 + random.nextInt(49),
+                10 + random.nextInt(190),
+                random.nextDouble() * 100.0,
+                minCap,
+                50 + random.nextInt(250),
+                0.8 + random.nextDouble() * 1.2,
+                random.nextInt(100),
+                minRating,
+                maxRating,
+                maxCap,
+                0.10
+        );
+    }
+
     public SimulationParams randomize(SimulationParams center, double radius) {
         double pctStep = radius;
         int dayStep = (int) Math.max(1, 100 * radius);
@@ -188,18 +234,18 @@ public class ParamOptimizer {
         double maxRating = clamp(center.maxRating() + randomDouble(ratingStep), minRating + 0.1, 5.0);
 
         return new SimulationParams(
-                clamp(center.sellCutOffPerc() + randomDouble(pctStep), 0.5, 1.0),
-                clamp(center.lowerPriceToLongAvgBuyIn() + randomDouble(pctStep), 0.5, 1.0),
-                clamp(center.higherPriceToLongAvgBuyIn() + randomDouble(pctStep), 1.0, 1.5),
-                clampInt(center.timeFrameForUpwardLongAvg() + randomInt(smallDayStep), 5, 200),
-                clamp(center.aboveAvgRatingPricePerc() + randomDouble(pctStep), 0.5, 2.0),
-                clampInt(center.timeFrameForUpwardShortPrice() + randomInt(smallDayStep), 1, 50),
-                clampInt(center.timeFrameForOscillator() + randomInt(dayStep), 10, 200),
-                clamp(center.maxRSI() + randomDouble(20.0 * radius), 0.0, 100.0), // Max +/- 10 points
+                clamp(center.sellCutOffPerc() + randomDouble(pctStep), 0.1, 2.0),
+                clamp(center.lowerPriceToLongAvgBuyIn() + randomDouble(pctStep), 0.1, 2.0),
+                clamp(center.higherPriceToLongAvgBuyIn() + randomDouble(pctStep), 0.1, 3.0),
+                clampInt(center.timeFrameForUpwardLongAvg() + randomInt(smallDayStep), 2, 500),
+                clamp(center.aboveAvgRatingPricePerc() + randomDouble(pctStep), 0.1, 5.0),
+                clampInt(center.timeFrameForUpwardShortPrice() + randomInt(smallDayStep), 1, 100),
+                clampInt(center.timeFrameForOscillator() + randomInt(dayStep), 2, 500),
+                clamp(center.maxRSI() + randomDouble(20.0 * radius), 0.0, 100.0),
                 minCap,
-                clampInt(center.longMovingAvgTime() + randomInt(dayStep), 50, 300),
-                clamp(center.minRateOfAvgInc() + randomDouble(pctStep), 0.8, 2.0),
-                clampInt(center.maxPERatio() + randomInt((int) (20 * radius)), 0, 100),
+                clampInt(center.longMovingAvgTime() + randomInt(dayStep), 10, 1000),
+                clamp(center.minRateOfAvgInc() + randomDouble(pctStep), 0.0, 5.0),
+                clampInt(center.maxPERatio() + randomInt((int) (50 * radius)), 0, 1000),
                 minRating,
                 maxRating,
                 maxCap,

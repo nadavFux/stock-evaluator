@@ -6,8 +6,8 @@ A high-performance stock analysis and investment entry-point optimization suite.
 
 ### Backend
 - **Framework:** Spring Boot 3.1.5 (Java 17)
-- **Data Processing:** Apache Flink 1.17.0, Apache Spark 3.4.1
-- **Machine Learning:** Smile 3.0.2 (Random Forest for return prediction)
+- **Data Processing:** Native array-based optimization (`SimulationDataPackage`) for O(1) technical indicator retrieval.
+- **Machine Learning:** Deep Java Library (DJL) with LSTM-based Quantile Regression (Q5, Q50, Q95) for return prediction and uncertainty estimation.
 - **Communication:** WebSockets (STOMP/SockJS) for real-time updates
 - **Database:** H2 (Runtime/Dev), Spring Data JPA
 - **APIs:** Integration with Bridgewise, TASE, and Koyfin
@@ -27,15 +27,15 @@ A high-performance stock analysis and investment entry-point optimization suite.
    - `GraphingService` retrieves historical price data for charting and simulation.
 
 2. **Analysis Pipeline (`AnalysisService`):**
-   - **Hydration:** Fetching and preparing stock data.
-   - **Optimization:** `ParamOptimizer` runs parallel simulations to find the best trading parameters.
-   - **ML Training:** `MLModelService` extracts features (MA Gap, Momentum, RVOL, PEG, Volatility) and trains a Random Forest model.
+   - **Hydration:** Fetching and preparing stock data into `SimulationDataPackage` with pre-computed prefix sums and indicators.
+   - **Optimization:** `ParamOptimizer` runs parallel simulations to find the best trading parameters using iterative random search and zoom optimization.
+   - **ML Training:** `MLModelService` extracts sequence features and trains a Quantile LSTM model using Pinball Loss.
    - **Inference:** Applies best parameters and ML model to current market data.
    - **Broadcasting:** Sends `STATUS`, `PROGRESS`, `ML_FEATURES`, and `RESULTS` to the frontend via WebSockets.
 
 3. **Simulation Engine:**
-   - `Simulation` class handles heuristic scoring and AI predictions.
-   - Traditional indicators are blended with AI-predicted returns for a final recommendation.
+   - `Simulation` class handles heuristic scoring and AI predictions with statistical pruning for performance.
+   - Traditional indicators (MA Gap, RSI, Momentum, RVol, PEG, Volatility) are blended with AI-predicted returns for a final recommendation.
 
 ## Proposed "Massive Upgrade" Roadmap
 

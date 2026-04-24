@@ -68,6 +68,12 @@ public class MLModelService {
         }
     }
 
+    public int getSampleCount() {
+        synchronized (sequences) {
+            return sequences.size();
+        }
+    }
+
     public void train() {
         if (sequences.size() < 100) {
             logger.warn("Not enough samples to train ML model (need at least 100, got {})", sequences.size());
