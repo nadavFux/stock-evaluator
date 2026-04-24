@@ -44,14 +44,20 @@ public class Pipeline {
                             
                             java.util.concurrent.atomic.AtomicInteger sectorProcessed = new java.util.concurrent.atomic.AtomicInteger(0);
                             List<CompletableFuture<StockGraphState>> stockFutures = bases.stream()
-                                    .map(base -> CompletableFuture.supplyAsync(() -> dataService.enrich(base), ioExecutor)
-                                            .thenApplyAsync(enriched -> {
-                                                if (enriched == null) return null;
-                                                StockGraphState graph = graphingService.fetchGraphState(enriched);
-                                                int count = sectorProcessed.incrementAndGet();
-                                                if (count % 10 == 0 || count == bases.size()) {
-                                                    if (progressCallback != null) progressCallback.accept(String.format("Sector %d: %d/%d stocks hydrated", sector, count, bases.size()));
+                                    .map(base -> CompletableFuture.supplyAsync(() -> {
+                                                // 1. Check Cache First (Skip both enrichment and fetch if hit)
+                                                StockGraphState cached = graphingService.getCachedState(base.ticker_symbol());
+                                                if (cached != null) {
+                                                    updateProgress(sector, sectorProcessed, bases.size(), progressCallback);
+                                                    return cached;
                                                 }
+
+                                                // 2. Cache Miss: Full Enrichment + Fetch
+                                                com.stock.analyzer.model.Stock enriched = dataService.enrich(base);
+                                                if (enriched == null) return null;
+
+                                                StockGraphState graph = graphingService.fetchGraphState(enriched);
+                                                updateProgress(sector, sectorProcessed, bases.size(), progressCallback);
                                                 return graph;
                                             }, ioExecutor))
                                     .toList();
@@ -79,6 +85,13 @@ public class Pipeline {
                         .flatMap(List::stream)
                         .collect(Collectors.toList()))
                 .join();
+    }
+
+    private void updateProgress(int sector, java.util.concurrent.atomic.AtomicInteger processed, int total, java.util.function.Consumer<String> callback) {
+        int count = processed.incrementAndGet();
+        if (callback != null && (count % 10 == 0 || count == total)) {
+            callback.accept(String.format("Sector %d: %d/%d stocks hydrated", sector, count, total));
+        }
     }
 
     public void shutdown() {

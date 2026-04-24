@@ -175,10 +175,14 @@ public class StatsCalculator {
         return (prices.get(index) - (ma - 2 * stdDev)) / (4 * stdDev);
     }
 
-    public static void clearCache() {
+    public static void clearAllCaches() {
         preComputedMoving.clear();
         preComputedVolatility.clear();
         preComputedAvgVolume.clear();
+        SIMULATIONS.clear();
+    }
+
+    public static void clearSimulationCache() {
         SIMULATIONS.clear();
     }
 

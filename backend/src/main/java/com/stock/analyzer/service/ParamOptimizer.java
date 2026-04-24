@@ -58,7 +58,7 @@ public class ParamOptimizer {
                 logger.info("Generation {} found no better parameters. Center score: {}", iter, bestScore);
             }
 
-            com.stock.analyzer.core.StatsCalculator.clearCache();
+            com.stock.analyzer.core.StatsCalculator.clearSimulationCache();
             radius *= 0.75; // Zoom in
         }
 

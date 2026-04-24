@@ -35,26 +35,37 @@ public class GraphingService {
         this.cacheRepository = cacheRepository;
     }
 
-    public StockGraphState fetchGraphState(Stock stock) {
-        String ticker = stock.ticker_symbol();
-        
-        // Cache Check
-        var cached = cacheRepository.findById(ticker);
+    public StockGraphState getCachedState(String ticker) {
+        if (ticker == null) return null;
+        String normalizedTicker = ticker.trim().toUpperCase();
+        var cached = cacheRepository.findById(normalizedTicker);
         if (cached.isPresent() && cached.get().getLastUpdated().equals(LocalDate.now())) {
             try {
                 StockGraphState state = gson.fromJson(cached.get().getGraphDataJson(), StockGraphState.class);
                 if (state != null && state.closePrices() != null && !state.closePrices().isEmpty()) {
+                    logger.info("Cache HIT for {}", normalizedTicker);
                     return state;
                 }
             } catch (Exception e) {
-                logger.warn("Failed to deserialize graph cache for {}, fetching fresh.", ticker);
+                logger.warn("Failed to deserialize graph cache for {}, fetching fresh.", normalizedTicker);
             }
         }
+        return null;
+    }
+
+    public StockGraphState fetchGraphState(Stock stock) {
+        String ticker = stock.ticker_symbol().trim().toUpperCase();
+        
+        // Cache Check
+        StockGraphState cached = getCachedState(ticker);
+        if (cached != null) return cached;
+        
+        logger.info("Cache MISS for {}", ticker);
 
         try {
             // 1. Search for KID
-            logger.info("starting fetch for {}", ticker);
-            var searchBody = gson.toJson(new StocksSearchRequestBody(stock.ticker_symbol()));
+            logger.info("starting fresh fetch for {}", ticker);
+            var searchBody = gson.toJson(new StocksSearchRequestBody(ticker));
             String searchResponse = httpClient.post(searchUrl, searchBody, null).join();
             if (searchResponse == null) return null;
 
