@@ -1,0 +1,63 @@
+<h2>GPU Architectural Shift: Solving JIT Crashes</h2>
+<p class="subtitle">Moving from a monolithic "Monstrosity" kernel to a stable, GPU-native 3-stage pipeline.</p>
+
+<div class="split">
+  <div class="mockup">
+    <div class="mockup-header">CURRENT: Monolithic Kernel (CRASHING)</div>
+    <div class="mockup-body">
+      <div style="border: 2px solid #ef4444; padding: 15px; border-radius: 8px; background: #fee2e2;">
+        <h4 style="color: #b91c1c;">Single Kernel Thread</h4>
+        <ul style="font-size: 0.9em; line-height: 1.4;">
+          <li>Loop: 5 centers</li>
+          <li>Loop: 1000s of stocks</li>
+          <li>Loop: Start times</li>
+          <li>Loop: Search times</li>
+          <li>Loop: Select times</li>
+          <li><b>Deep Nested Logic</b> &lt;-- JIT fails here</li>
+          <li>Manual loop counter updates</li>
+          <li>Complex branching (break/continue)</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+
+  <div class="mockup">
+    <div class="mockup-header">PROPOSED: Triple-Kernel Pipeline (STABLE)</div>
+    <div class="mockup-body">
+      <div style="border: 2px solid #22c55e; padding: 10px; border-radius: 8px; background: #f0fdf4; margin-bottom: 8px;">
+        <h4 style="color: #15803d; margin: 0;">1. Indicators Kernel</h4>
+        <p style="font-size: 0.8em; margin: 4px 0;">Pre-computes MA Gap, RVol, etc.</p>
+      </div>
+      <div style="text-align: center; margin: -4px 0;">⬇️</div>
+      <div style="border: 2px solid #22c55e; padding: 10px; border-radius: 8px; background: #f0fdf4; margin-bottom: 8px;">
+        <h4 style="color: #15803d; margin: 0;">2. Heuristic Scorer Kernel</h4>
+        <p style="font-size: 0.8em; margin: 4px 0;">Parallel across Centers × Stocks × Days.</p>
+        <p style="font-size: 0.8em; font-weight: bold;">(NO LOOPS! Pure Math)</p>
+      </div>
+      <div style="text-align: center; margin: -4px 0;">⬇️</div>
+      <div style="border: 2px solid #22c55e; padding: 10px; border-radius: 8px; background: #f0fdf4;">
+        <h4 style="color: #15803d; margin: 0;">3. Simulation Runner Kernel</h4>
+        <p style="font-size: 0.8em; margin: 4px 0;">Simple scan through pre-computed scores.</p>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="section" style="margin-top: 20px;">
+  <h3>Why this works:</h3>
+  <ul class="subtitle" style="text-align: left; display: inline-block;">
+    <li>✅ <b>Zero Nesting:</b> Most work happens in Kernel 2 with 0 loops.</li>
+    <li>✅ <b>GPU Optimized:</b> Kernel 2 uses 100% of GPU compute cores simultaneously.</li>
+    <li>✅ <b>Stable Syntax:</b> Removes all `break`, `continue`, and `i=curr` patterns.</li>
+  </ul>
+</div>
+
+<div class="options">
+  <div class="option" data-choice="proceed" onclick="toggleSelect(this)">
+    <div class="letter">A</div>
+    <div class="content">
+      <h3>Proceed with Design</h3>
+      <p>I understand and approve this architectural shift.</p>
+    </div>
+  </div>
+</div>

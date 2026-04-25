@@ -15,7 +15,12 @@ public class OptimizerFactory {
         switch (type.toLowerCase()) {
             case "tornadovm":
             case "gpu":
-                return new TornadoVmOptimizer(config);
+                if (TornadoVmOptimizer.isAvailable()) {
+                    return new TornadoVmOptimizer(config);
+                } else {
+                    logger.warn("GPU Optimizer requested but TornadoVM is not functional. Falling back to CPU.");
+                    return new CpuParamOptimizer(config);
+                }
             case "cpu":
             default:
                 return new CpuParamOptimizer(config);

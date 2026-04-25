@@ -124,7 +124,7 @@ public class CpuParamOptimizer implements Optimizer {
                 .orElse(new CandidateResult(center, bestScore));
     }
 
-    private List<CandidateResult> evaluateParallel(List<SimulationParams> candidates, List<Integer> stockSubset, SimulationDataPackage pkg, boolean rescue) {
+    List<CandidateResult> evaluateParallel(List<SimulationParams> candidates, List<Integer> stockSubset, SimulationDataPackage pkg, boolean rescue) {
         List<CompletableFuture<CandidateResult>> futures = new ArrayList<>();
         for (SimulationParams p : candidates) {
             futures.add(CompletableFuture.supplyAsync(() -> {
@@ -171,7 +171,7 @@ public class CpuParamOptimizer implements Optimizer {
         return new Pair<>(sim.getTradeCount(), evaluatedFrames);
     }
 
-    private double evaluateCandidate(SimulationParams params, SimulationDataPackage pkg, boolean collectML) {
+    double evaluateCandidate(SimulationParams params, SimulationDataPackage pkg, boolean collectML) {
         Simulation sim = new Simulation(params);
         if (sim.params == null) return -100.0;
 
@@ -290,8 +290,5 @@ public class CpuParamOptimizer implements Optimizer {
         for (int i = 0; i < count; i++) idx.add(i);
         Collections.shuffle(idx);
         return idx;
-    }
-
-    private record CandidateResult(SimulationParams params, double score) {
     }
 }

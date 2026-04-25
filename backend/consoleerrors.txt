@@ -1,47 +1,508 @@
-Error starting ApplicationContext. To display the condition evaluation report re-run your application with 'debug' enabled.
-15:25:58.821 [main] ERROR o.s.boot.SpringApplication - Application run failed
-org.springframework.beans.factory.BeanCreationException: Error creating bean with name 'entityManagerFactory' defined in class path resource [org/springframework/boot/autoconfigure/orm/jpa/HibernateJpaConfiguration.class]: null
-	at org.springframework.beans.factory.support.AbstractAutowireCapableBeanFactory.initializeBean(AbstractAutowireCapableBeanFactory.java:1802)
-	at org.springframework.beans.factory.support.AbstractAutowireCapableBeanFactory.doCreateBean(AbstractAutowireCapableBeanFactory.java:601)
-	at org.springframework.beans.factory.support.AbstractAutowireCapableBeanFactory.createBean(AbstractAutowireCapableBeanFactory.java:523)
-	at org.springframework.beans.factory.support.AbstractBeanFactory.lambda$doGetBean$0(AbstractBeanFactory.java:336)
-	at org.springframework.beans.factory.support.DefaultSingletonBeanRegistry.getSingleton(DefaultSingletonBeanRegistry.java:288)
-	at org.springframework.beans.factory.support.AbstractBeanFactory.doGetBean(AbstractBeanFactory.java:334)
-	at org.springframework.beans.factory.support.AbstractBeanFactory.getBean(AbstractBeanFactory.java:204)
-	at org.springframework.context.support.AbstractApplicationContext.finishBeanFactoryInitialization(AbstractApplicationContext.java:970)
-	at org.springframework.context.support.AbstractApplicationContext.refresh(AbstractApplicationContext.java:627)
-	at org.springframework.boot.web.servlet.context.ServletWebServerApplicationContext.refresh(ServletWebServerApplicationContext.java:146)
-	at org.springframework.boot.SpringApplication.refresh(SpringApplication.java:752)
-	at org.springframework.boot.SpringApplication.refreshContext(SpringApplication.java:439)
-	at org.springframework.boot.SpringApplication.run(SpringApplication.java:318)
-	at org.springframework.boot.SpringApplication.run(SpringApplication.java:1361)
-	at org.springframework.boot.SpringApplication.run(SpringApplication.java:1350)
-	at com.stock.analyzer.App.main(App.java:11)
-Caused by: java.lang.ExceptionInInitializerError: null
-	at org.hibernate.boot.internal.SessionFactoryOptionsBuilder.lambda$determineJsonFormatMapper$7(SessionFactoryOptionsBuilder.java:848)
-	at org.hibernate.boot.registry.selector.internal.StrategySelectorImpl.resolveStrategy(StrategySelectorImpl.java:220)
-	at org.hibernate.boot.registry.selector.internal.StrategySelectorImpl.resolveDefaultableStrategy(StrategySelectorImpl.java:180)
-	at org.hibernate.boot.internal.SessionFactoryOptionsBuilder.determineJsonFormatMapper(SessionFactoryOptionsBuilder.java:844)
-	at org.hibernate.boot.internal.SessionFactoryOptionsBuilder.<init>(SessionFactoryOptionsBuilder.java:316)
-	at org.hibernate.boot.internal.SessionFactoryBuilderImpl.<init>(SessionFactoryBuilderImpl.java:50)
-	at org.hibernate.boot.internal.DefaultSessionFactoryBuilderService.createSessionFactoryBuilder(DefaultSessionFactoryBuilderService.java:26)
-	at org.hibernate.boot.internal.MetadataImpl.getSessionFactoryBuilder(MetadataImpl.java:175)
-	at org.hibernate.jpa.boot.internal.EntityManagerFactoryBuilderImpl.build(EntityManagerFactoryBuilderImpl.java:1502)
-	at org.springframework.orm.jpa.vendor.SpringHibernateJpaPersistenceProvider.createContainerEntityManagerFactory(SpringHibernateJpaPersistenceProvider.java:66)
-	at org.springframework.orm.jpa.LocalContainerEntityManagerFactoryBean.createNativeEntityManagerFactory(LocalContainerEntityManagerFactoryBean.java:390)
-	at org.springframework.orm.jpa.AbstractEntityManagerFactoryBean.buildNativeEntityManagerFactory(AbstractEntityManagerFactoryBean.java:419)
-	at org.springframework.orm.jpa.AbstractEntityManagerFactoryBean.afterPropertiesSet(AbstractEntityManagerFactoryBean.java:400)
-	at org.springframework.orm.jpa.LocalContainerEntityManagerFactoryBean.afterPropertiesSet(LocalContainerEntityManagerFactoryBean.java:366)
-	at org.springframework.beans.factory.support.AbstractAutowireCapableBeanFactory.invokeInitMethods(AbstractAutowireCapableBeanFactory.java:1849)
-	at org.springframework.beans.factory.support.AbstractAutowireCapableBeanFactory.initializeBean(AbstractAutowireCapableBeanFactory.java:1798)
-	... 15 common frames omitted
-Caused by: com.fasterxml.jackson.databind.JsonMappingException: Scala module 2.18.1 requires Jackson Databind version >= 2.18.0 and < 2.19.0 - Found jackson-databind version 2.15.2
-	at com.fasterxml.jackson.module.scala.JacksonModule.setupModule(JacksonModule.scala:61)
-	at com.fasterxml.jackson.module.scala.JacksonModule.setupModule$(JacksonModule.scala:46)
-	at com.fasterxml.jackson.module.scala.DefaultScalaModule.setupModule(DefaultScalaModule.scala:17)
-	at com.fasterxml.jackson.databind.ObjectMapper.registerModule(ObjectMapper.java:879)
-	at com.fasterxml.jackson.databind.ObjectMapper.registerModules(ObjectMapper.java:1081)
-	at com.fasterxml.jackson.databind.ObjectMapper.findAndRegisterModules(ObjectMapper.java:1165)
-	at org.hibernate.type.format.jackson.JacksonJsonFormatMapper.<init>(JacksonJsonFormatMapper.java:27)
-	at org.hibernate.type.format.jackson.JacksonIntegration.<clinit>(JacksonIntegration.java:18)
-	... 31 common frames omitted
+14 errors generated.
+[TornadoVM-OCL-JNI] ERROR : clBuildProgram -> Returned: -11
+
+[ERROR] TornadoVM JIT Compiler - OpenCL Build Error Log:
+
+<kernel>:131:1: error: expected identifier or '('
+else
+^
+<kernel>:136:4: error: expected identifier or '('
+*((__global double *) ul_34)  =  0.0;
+   ^
+<kernel>:136:4: error: expected ')'
+<kernel>:136:3: note: to match this '('
+*((__global double *) ul_34)  =  0.0;
+  ^
+<kernel>:136:23: error: expected ')'
+*((__global double *) ul_34)  =  0.0;
+                      ^
+<kernel>:136:2: note: to match this '('
+*((__global double *) ul_34)  =  0.0;
+ ^
+<kernel>:137:4: error: expected identifier or '('
+*((__global double *) ul_33)  =  0.0;
+   ^
+<kernel>:137:4: error: expected ')'
+<kernel>:137:3: note: to match this '('
+*((__global double *) ul_33)  =  0.0;
+  ^
+<kernel>:137:23: error: expected ')'
+*((__global double *) ul_33)  =  0.0;
+                      ^
+<kernel>:137:2: note: to match this '('
+*((__global double *) ul_33)  =  0.0;
+ ^
+<kernel>:138:4: error: expected identifier or '('
+*((__global double *) ul_32)  =  0.0;
+   ^
+<kernel>:138:4: error: expected ')'
+<kernel>:138:3: note: to match this '('
+*((__global double *) ul_32)  =  0.0;
+  ^
+<kernel>:138:23: error: expected ')'
+*((__global double *) ul_32)  =  0.0;
+                      ^
+<kernel>:138:2: note: to match this '('
+*((__global double *) ul_32)  =  0.0;
+ ^
+<kernel>:140:10: error: use of undeclared identifier 'i_29'
+i_68  =  i_29;
+         ^
+<kernel>:142:1: error: extraneous closing brace ('}')
+}  // B17
+^
+<kernel>:144:1: error: expected identifier or '('
+return;
+^
+<kernel>:145:1: error: extraneous closing brace ('}')
+}  //  kernel
+^
+
+
+[Bailout] Running the sequential implementation. Enable --debug to see the reason.
+1 error generated.
+[TornadoVM-OCL-JNI] ERROR : clBuildProgram -> Returned: -11
+
+[ERROR] TornadoVM JIT Compiler - OpenCL Build Error Log:
+
+<kernel>:330:16: error: expected '}'
+  }  //  kernel
+               ^
+<kernel>:5:1: note: to match this '{'
+{
+^
+
+
+[Bailout] Running the sequential implementation. Enable --debug to see the reason.
+22:38:11.108 [ForkJoinPool.commonPool-worker-2] INFO  c.s.a.service.TornadoVmOptimizer - Center 0 Initial Score: 14.735587921847914
+22:38:11.109 [ForkJoinPool.commonPool-worker-2] INFO  c.s.a.service.TornadoVmOptimizer - Evaluating Initial Center 2/5 on GPU...
+14 errors generated.
+[TornadoVM-OCL-JNI] ERROR : clBuildProgram -> Returned: -11
+
+[ERROR] TornadoVM JIT Compiler - OpenCL Build Error Log:
+
+<kernel>:131:1: error: expected identifier or '('
+else
+^
+<kernel>:136:4: error: expected identifier or '('
+*((__global double *) ul_34)  =  0.0;
+   ^
+<kernel>:136:4: error: expected ')'
+<kernel>:136:3: note: to match this '('
+*((__global double *) ul_34)  =  0.0;
+  ^
+<kernel>:136:23: error: expected ')'
+*((__global double *) ul_34)  =  0.0;
+                      ^
+<kernel>:136:2: note: to match this '('
+*((__global double *) ul_34)  =  0.0;
+ ^
+<kernel>:137:4: error: expected identifier or '('
+*((__global double *) ul_33)  =  0.0;
+   ^
+<kernel>:137:4: error: expected ')'
+<kernel>:137:3: note: to match this '('
+*((__global double *) ul_33)  =  0.0;
+  ^
+<kernel>:137:23: error: expected ')'
+*((__global double *) ul_33)  =  0.0;
+                      ^
+<kernel>:137:2: note: to match this '('
+*((__global double *) ul_33)  =  0.0;
+ ^
+<kernel>:138:4: error: expected identifier or '('
+*((__global double *) ul_32)  =  0.0;
+   ^
+<kernel>:138:4: error: expected ')'
+<kernel>:138:3: note: to match this '('
+*((__global double *) ul_32)  =  0.0;
+  ^
+<kernel>:138:23: error: expected ')'
+*((__global double *) ul_32)  =  0.0;
+                      ^
+<kernel>:138:2: note: to match this '('
+*((__global double *) ul_32)  =  0.0;
+ ^
+<kernel>:140:10: error: use of undeclared identifier 'i_29'
+i_68  =  i_29;
+         ^
+<kernel>:142:1: error: extraneous closing brace ('}')
+}  // B17
+^
+<kernel>:144:1: error: expected identifier or '('
+return;
+^
+<kernel>:145:1: error: extraneous closing brace ('}')
+}  //  kernel
+^
+
+
+[Bailout] Running the sequential implementation. Enable --debug to see the reason.
+1 error generated.
+[TornadoVM-OCL-JNI] ERROR : clBuildProgram -> Returned: -11
+
+[ERROR] TornadoVM JIT Compiler - OpenCL Build Error Log:
+
+<kernel>:330:16: error: expected '}'
+  }  //  kernel
+               ^
+<kernel>:5:1: note: to match this '{'
+{
+^
+
+
+[Bailout] Running the sequential implementation. Enable --debug to see the reason.
+22:38:11.704 [ForkJoinPool.commonPool-worker-2] INFO  c.s.a.service.TornadoVmOptimizer - Center 1 Initial Score: 16.662504270121037
+22:38:11.758 [ForkJoinPool.commonPool-worker-2] INFO  c.s.a.service.TornadoVmOptimizer - Evaluating Initial Center 3/5 on GPU...
+14 errors generated.
+[TornadoVM-OCL-JNI] ERROR : clBuildProgram -> Returned: -11
+
+[ERROR] TornadoVM JIT Compiler - OpenCL Build Error Log:
+
+<kernel>:131:1: error: expected identifier or '('
+else
+^
+<kernel>:136:4: error: expected identifier or '('
+*((__global double *) ul_34)  =  0.0;
+   ^
+<kernel>:136:4: error: expected ')'
+<kernel>:136:3: note: to match this '('
+*((__global double *) ul_34)  =  0.0;
+  ^
+<kernel>:136:23: error: expected ')'
+*((__global double *) ul_34)  =  0.0;
+                      ^
+<kernel>:136:2: note: to match this '('
+*((__global double *) ul_34)  =  0.0;
+ ^
+<kernel>:137:4: error: expected identifier or '('
+*((__global double *) ul_33)  =  0.0;
+   ^
+<kernel>:137:4: error: expected ')'
+<kernel>:137:3: note: to match this '('
+*((__global double *) ul_33)  =  0.0;
+  ^
+<kernel>:137:23: error: expected ')'
+*((__global double *) ul_33)  =  0.0;
+                      ^
+<kernel>:137:2: note: to match this '('
+*((__global double *) ul_33)  =  0.0;
+ ^
+<kernel>:138:4: error: expected identifier or '('
+*((__global double *) ul_32)  =  0.0;
+   ^
+<kernel>:138:4: error: expected ')'
+<kernel>:138:3: note: to match this '('
+*((__global double *) ul_32)  =  0.0;
+  ^
+<kernel>:138:23: error: expected ')'
+*((__global double *) ul_32)  =  0.0;
+                      ^
+<kernel>:138:2: note: to match this '('
+*((__global double *) ul_32)  =  0.0;
+ ^
+<kernel>:140:10: error: use of undeclared identifier 'i_29'
+i_68  =  i_29;
+         ^
+<kernel>:142:1: error: extraneous closing brace ('}')
+}  // B17
+^
+<kernel>:144:1: error: expected identifier or '('
+return;
+^
+<kernel>:145:1: error: extraneous closing brace ('}')
+}  //  kernel
+^
+
+
+[Bailout] Running the sequential implementation. Enable --debug to see the reason.
+1 error generated.
+[TornadoVM-OCL-JNI] ERROR : clBuildProgram -> Returned: -11
+
+[ERROR] TornadoVM JIT Compiler - OpenCL Build Error Log:
+
+<kernel>:330:16: error: expected '}'
+  }  //  kernel
+               ^
+<kernel>:5:1: note: to match this '{'
+{
+^
+
+
+[Bailout] Running the sequential implementation. Enable --debug to see the reason.
+22:38:12.360 [ForkJoinPool.commonPool-worker-2] INFO  c.s.a.service.TornadoVmOptimizer - Center 2 Initial Score: 15.595003948095084
+22:38:12.360 [ForkJoinPool.commonPool-worker-2] INFO  c.s.a.service.TornadoVmOptimizer - Evaluating Initial Center 4/5 on GPU...
+14 errors generated.
+[TornadoVM-OCL-JNI] ERROR : clBuildProgram -> Returned: -11
+
+[ERROR] TornadoVM JIT Compiler - OpenCL Build Error Log:
+
+<kernel>:131:1: error: expected identifier or '('
+else
+^
+<kernel>:136:4: error: expected identifier or '('
+*((__global double *) ul_34)  =  0.0;
+   ^
+<kernel>:136:4: error: expected ')'
+<kernel>:136:3: note: to match this '('
+*((__global double *) ul_34)  =  0.0;
+  ^
+<kernel>:136:23: error: expected ')'
+*((__global double *) ul_34)  =  0.0;
+                      ^
+<kernel>:136:2: note: to match this '('
+*((__global double *) ul_34)  =  0.0;
+ ^
+<kernel>:137:4: error: expected identifier or '('
+*((__global double *) ul_33)  =  0.0;
+   ^
+<kernel>:137:4: error: expected ')'
+<kernel>:137:3: note: to match this '('
+*((__global double *) ul_33)  =  0.0;
+  ^
+<kernel>:137:23: error: expected ')'
+*((__global double *) ul_33)  =  0.0;
+                      ^
+<kernel>:137:2: note: to match this '('
+*((__global double *) ul_33)  =  0.0;
+ ^
+<kernel>:138:4: error: expected identifier or '('
+*((__global double *) ul_32)  =  0.0;
+   ^
+<kernel>:138:4: error: expected ')'
+<kernel>:138:3: note: to match this '('
+*((__global double *) ul_32)  =  0.0;
+  ^
+<kernel>:138:23: error: expected ')'
+*((__global double *) ul_32)  =  0.0;
+                      ^
+<kernel>:138:2: note: to match this '('
+*((__global double *) ul_32)  =  0.0;
+ ^
+<kernel>:140:10: error: use of undeclared identifier 'i_29'
+i_68  =  i_29;
+         ^
+<kernel>:142:1: error: extraneous closing brace ('}')
+}  // B17
+^
+<kernel>:144:1: error: expected identifier or '('
+return;
+^
+<kernel>:145:1: error: extraneous closing brace ('}')
+}  //  kernel
+^
+
+
+[Bailout] Running the sequential implementation. Enable --debug to see the reason.
+1 error generated.
+[TornadoVM-OCL-JNI] ERROR : clBuildProgram -> Returned: -11
+
+[ERROR] TornadoVM JIT Compiler - OpenCL Build Error Log:
+
+<kernel>:330:16: error: expected '}'
+  }  //  kernel
+               ^
+<kernel>:5:1: note: to match this '{'
+{
+^
+
+
+[Bailout] Running the sequential implementation. Enable --debug to see the reason.
+22:38:12.789 [ForkJoinPool.commonPool-worker-2] INFO  c.s.a.service.TornadoVmOptimizer - Center 3 Initial Score: 16.600021926674515
+22:38:12.790 [ForkJoinPool.commonPool-worker-2] INFO  c.s.a.service.TornadoVmOptimizer - Evaluating Initial Center 5/5 on GPU...
+14 errors generated.
+[TornadoVM-OCL-JNI] ERROR : clBuildProgram -> Returned: -11
+
+[ERROR] TornadoVM JIT Compiler - OpenCL Build Error Log:
+
+<kernel>:131:1: error: expected identifier or '('
+else
+^
+<kernel>:136:4: error: expected identifier or '('
+*((__global double *) ul_34)  =  0.0;
+   ^
+<kernel>:136:4: error: expected ')'
+<kernel>:136:3: note: to match this '('
+*((__global double *) ul_34)  =  0.0;
+  ^
+<kernel>:136:23: error: expected ')'
+*((__global double *) ul_34)  =  0.0;
+                      ^
+<kernel>:136:2: note: to match this '('
+*((__global double *) ul_34)  =  0.0;
+ ^
+<kernel>:137:4: error: expected identifier or '('
+*((__global double *) ul_33)  =  0.0;
+   ^
+<kernel>:137:4: error: expected ')'
+<kernel>:137:3: note: to match this '('
+*((__global double *) ul_33)  =  0.0;
+  ^
+<kernel>:137:23: error: expected ')'
+*((__global double *) ul_33)  =  0.0;
+                      ^
+<kernel>:137:2: note: to match this '('
+*((__global double *) ul_33)  =  0.0;
+ ^
+<kernel>:138:4: error: expected identifier or '('
+*((__global double *) ul_32)  =  0.0;
+   ^
+<kernel>:138:4: error: expected ')'
+<kernel>:138:3: note: to match this '('
+*((__global double *) ul_32)  =  0.0;
+  ^
+<kernel>:138:23: error: expected ')'
+*((__global double *) ul_32)  =  0.0;
+                      ^
+<kernel>:138:2: note: to match this '('
+*((__global double *) ul_32)  =  0.0;
+ ^
+<kernel>:140:10: error: use of undeclared identifier 'i_29'
+i_68  =  i_29;
+         ^
+<kernel>:142:1: error: extraneous closing brace ('}')
+}  // B17
+^
+<kernel>:144:1: error: expected identifier or '('
+return;
+^
+<kernel>:145:1: error: extraneous closing brace ('}')
+}  //  kernel
+^
+
+
+[Bailout] Running the sequential implementation. Enable --debug to see the reason.
+1 error generated.
+[TornadoVM-OCL-JNI] ERROR : clBuildProgram -> Returned: -11
+
+[ERROR] TornadoVM JIT Compiler - OpenCL Build Error Log:
+
+<kernel>:330:16: error: expected '}'
+  }  //  kernel
+               ^
+<kernel>:5:1: note: to match this '{'
+{
+^
+
+
+[Bailout] Running the sequential implementation. Enable --debug to see the reason.
+22:38:13.221 [ForkJoinPool.commonPool-worker-2] INFO  c.s.a.service.TornadoVmOptimizer - Center 4 Initial Score: -100.0
+22:38:13.221 [ForkJoinPool.commonPool-worker-2] INFO  c.s.a.service.TornadoVmOptimizer - Generation 1 (Radius: 0.25)
+14 errors generated.
+[TornadoVM-OCL-JNI] ERROR : clBuildProgram -> Returned: -11
+
+[ERROR] TornadoVM JIT Compiler - OpenCL Build Error Log:
+
+<kernel>:131:1: error: expected identifier or '('
+else
+^
+<kernel>:136:4: error: expected identifier or '('
+*((__global double *) ul_34)  =  0.0;
+   ^
+<kernel>:136:4: error: expected ')'
+<kernel>:136:3: note: to match this '('
+*((__global double *) ul_34)  =  0.0;
+  ^
+<kernel>:136:23: error: expected ')'
+*((__global double *) ul_34)  =  0.0;
+                      ^
+<kernel>:136:2: note: to match this '('
+*((__global double *) ul_34)  =  0.0;
+ ^
+<kernel>:137:4: error: expected identifier or '('
+*((__global double *) ul_33)  =  0.0;
+   ^
+<kernel>:137:4: error: expected ')'
+<kernel>:137:3: note: to match this '('
+*((__global double *) ul_33)  =  0.0;
+  ^
+<kernel>:137:23: error: expected ')'
+*((__global double *) ul_33)  =  0.0;
+                      ^
+<kernel>:137:2: note: to match this '('
+*((__global double *) ul_33)  =  0.0;
+ ^
+<kernel>:138:4: error: expected identifier or '('
+*((__global double *) ul_32)  =  0.0;
+   ^
+<kernel>:138:4: error: expected ')'
+<kernel>:138:3: note: to match this '('
+*((__global double *) ul_32)  =  0.0;
+  ^
+<kernel>:138:23: error: expected ')'
+*((__global double *) ul_32)  =  0.0;
+                      ^
+<kernel>:138:2: note: to match this '('
+*((__global double *) ul_32)  =  0.0;
+ ^
+<kernel>:140:10: error: use of undeclared identifier 'i_29'
+i_68  =  i_29;
+         ^
+<kernel>:142:1: error: extraneous closing brace ('}')
+}  // B17
+^
+<kernel>:144:1: error: expected identifier or '('
+return;
+^
+<kernel>:145:1: error: extraneous closing brace ('}')
+}  //  kernel
+^
+
+
+[Bailout] Running the sequential implementation. Enable --debug to see the reason.
+1 error generated.
+[TornadoVM-OCL-JNI] ERROR : clBuildProgram -> Returned: -11
+
+[ERROR] TornadoVM JIT Compiler - OpenCL Build Error Log:
+
+<kernel>:330:16: error: expected '}'
+  }  //  kernel
+               ^
+<kernel>:5:1: note: to match this '{'
+{
+^
+
+
+[Bailout] Running the sequential implementation. Enable --debug to see the reason.
+1 error generated.
+[TornadoVM-OCL-JNI] ERROR : clBuildProgram -> Returned: -11
+
+[ERROR] TornadoVM JIT Compiler - OpenCL Build Error Log:
+
+<kernel>:330:16: error: expected '}'
+  }  //  kernel
+               ^
+<kernel>:5:1: note: to match this '{'
+{
+^
+
+
+[Bailout] Running the sequential implementation. Enable --debug to see the reason.
+1 error generated.
+[TornadoVM-OCL-JNI] ERROR : clBuildProgram -> Returned: -11
+
+[ERROR] TornadoVM JIT Compiler - OpenCL Build Error Log:
+
+<kernel>:330:16: error: expected '}'
+  }  //  kernel
+               ^
+<kernel>:5:1: note: to match this '{'
+{
+^
+
+
+[Bailout] Running the sequential implementation. Enable --debug to see the reason.
+1 error generated.
+[TornadoVM-OCL-JNI] ERROR : clBuildProgram -> Returned: -11
+
+[ERROR] TornadoVM JIT Compiler - OpenCL Build Error Log:
+
+<kernel>:330:16: error: expected '}'
+  }  //  kernel
+               ^
+<kernel>:5:1: note: to match this '{'
+{
+^
+
+
+[Bailout] Running the sequential implementation. Enable --debug to see the reason.

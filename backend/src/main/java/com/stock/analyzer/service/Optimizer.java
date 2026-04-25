@@ -11,4 +11,6 @@ import java.util.List;
 public interface Optimizer {
     SimulationParams optimize(List<StockGraphState> allStocks);
     MLModelService getMlService();
+
+    record CandidateResult(SimulationParams params, double score) {}
 }

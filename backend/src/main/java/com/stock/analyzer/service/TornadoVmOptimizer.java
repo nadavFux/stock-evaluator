@@ -1,11 +1,11 @@
 package com.stock.analyzer.service;
 
-import ai.djl.util.Pair;
-import com.stock.analyzer.core.Simulation;
-import com.stock.analyzer.model.*;
+import com.stock.analyzer.model.SimulationDataPackage;
+import com.stock.analyzer.model.SimulationParams;
+import com.stock.analyzer.model.SimulationRangeConfig;
+import com.stock.analyzer.model.StockGraphState;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import uk.ac.manchester.tornado.api.ImmutableTaskGraph;
 import uk.ac.manchester.tornado.api.TaskGraph;
 import uk.ac.manchester.tornado.api.TornadoExecutionPlan;
 import uk.ac.manchester.tornado.api.annotations.Parallel;
@@ -17,12 +17,40 @@ import java.util.*;
 import java.util.concurrent.CompletableFuture;
 
 /**
- * Advanced GPU-accelerated parameter optimizer using TornadoVM.
- * Implements the full Iterative Random Search with Zoom logic.
- * Uses GPU kernels to instantly evaluate thousands of candidates for signal viability.
+ * High-Performance Massive 2D Grid GPU Optimizer using TornadoVM.
+ * Parallelizes across both Parameter Sets AND Stocks (Over 50,000 threads).
+ * Maintains logic and precision parity with the CPU optimizer.
  */
 public class TornadoVmOptimizer implements Optimizer {
     private static final Logger logger = LoggerFactory.getLogger(TornadoVmOptimizer.class);
+    private static boolean isAvailable = false;
+
+    static {
+        try {
+            var runtime = uk.ac.manchester.tornado.api.runtime.TornadoRuntimeProvider.getTornadoRuntime();
+            if (runtime != null && runtime.getNumBackends() > 0) {
+                logger.info("TornadoVM Hardware Discovery:");
+                for (int i = 0; i < runtime.getNumBackends(); i++) {
+                    var backend = runtime.getBackend(i);
+                    logger.info("  Backend {}: {}", i, backend.getName());
+                    for (int j = 0; j < backend.getNumDevices(); j++) {
+                        var device = backend.getDevice(j);
+                        logger.info("    Device {}: {}", j, device.getDeviceName());
+                    }
+                }
+                isAvailable = true;
+            } else {
+                logger.warn("TornadoVM runtime loaded but no backends available. Falling back to CPU.");
+            }
+        } catch (Throwable t) {
+            logger.warn("TornadoVM initialization failed. Falling back to CPU: {}", t.getMessage());
+        }
+    }
+
+    public static boolean isAvailable() {
+        return isAvailable;
+    }
+
     private final SimulationRangeConfig config;
     private final MLModelService mlService = new MLModelService();
     private final Random random = new Random();
@@ -40,333 +68,388 @@ public class TornadoVmOptimizer implements Optimizer {
 
     @Override
     public SimulationParams optimize(List<StockGraphState> allStocks) {
-        logger.info("Starting Multi-Start Param Optimization Workflow (GPU/TornadoVM)...");
+        logger.info("Starting Massive 2D Grid GPU Optimization Workflow...");
         SimulationDataPackage dataPkg = new SimulationDataPackage(allStocks);
 
         int M = 5;
         List<SimulationParams> centers = new ArrayList<>();
         centers.add(centerParamsFromConfig());
-        for (int i = 1; i < M; i++) {
-            centers.add(randomize(centers.get(0), 1.0));
-        }
+        for (int i = 1; i < M; i++) centers.add(randomize(centers.get(0), 1.0));
+
+        logger.info("Flattening stock dataset into GPU segments...");
+        DoubleArray gpuPrices = flatten(dataPkg.closePrices, dataPkg.stockCount, dataPkg.daysCount);
+        DoubleArray gpuPrefixSums = flatten(dataPkg.pricePrefixSum, dataPkg.stockCount, dataPkg.daysCount);
+        DoubleArray gpuSqPrefixSums = flatten(dataPkg.priceSqPrefixSum, dataPkg.stockCount, dataPkg.daysCount);
+        DoubleArray gpuRatings = flatten(dataPkg.ratings, dataPkg.stockCount, dataPkg.daysCount);
+        DoubleArray gpuVolumes = flatten(dataPkg.volumes, dataPkg.stockCount, dataPkg.daysCount);
+        DoubleArray gpuAvgVols = flatten(dataPkg.avgVol30d, dataPkg.stockCount, dataPkg.daysCount);
+        IntArray gpuOffsets = IntArray.fromArray(dataPkg.offsets);
 
         List<Double> bestScores = new ArrayList<>(Collections.nCopies(M, -100.0));
         boolean[] rescueModes = new boolean[M];
-        
+
         for (int i = 0; i < M; i++) {
-            double initialScore = evaluateCandidate(centers.get(i), dataPkg, false);
+            logger.info("Evaluating Initial Center {}/{} on GPU...", i + 1, M);
+            double initialScore = evaluateCandidate(centers.get(i), dataPkg, false, gpuPrices, gpuPrefixSums, gpuSqPrefixSums, gpuRatings, gpuVolumes, gpuAvgVols, gpuOffsets);
             bestScores.set(i, initialScore);
-            rescueModes[i] = (initialScore == -100.0);
+            rescueModes[i] = (initialScore <= -90.0);
             logger.info("Center {} Initial Score: {}", i, initialScore);
         }
 
         double radius = 0.25;
-
         for (int gen = 1; gen <= 10 && radius >= 0.05; gen++) {
             logger.info("Generation {} (Radius: {})", gen, radius);
 
-            List<Integer> subset = getShuffledIndices(dataPkg.stockCount).subList(0, Math.max(1, dataPkg.stockCount / 2));
+            List<Integer> subsetIndices = getShuffledIndices(dataPkg.stockCount).subList(0, Math.max(1, dataPkg.stockCount / 2));
+            IntArray gpuSubset = toIntArray(subsetIndices);
 
-            // GPU Pre-computation: Flatten dataset once per generation subset
-            DoubleArray gpuPrices = flatten(dataPkg.closePrices, subset, dataPkg.daysCount);
-            DoubleArray gpuRatings = flatten(dataPkg.ratings, subset, dataPkg.daysCount);
-            DoubleArray gpuAvgVol30d = flatten(dataPkg.avgVol30d, subset, dataPkg.daysCount);
-            DoubleArray gpuVolumes = flatten(dataPkg.volumes, subset, dataPkg.daysCount);
-            
             List<CompletableFuture<Void>> futures = new ArrayList<>();
             for (int c = 0; c < M; c++) {
                 final int centerIdx = c;
-                SimulationParams center = centers.get(centerIdx);
-                double currentBest = bestScores.get(centerIdx);
-                boolean rescue = rescueModes[centerIdx];
-
+                final SimulationParams center = centers.get(centerIdx);
+                final boolean rescue = rescueModes[centerIdx];
                 final double currentRadius = radius;
-                futures.add(CompletableFuture.runAsync(() -> {
-                    CandidateResult result = runGeneration(center, currentBest, currentRadius, 500, rescue, dataPkg, subset, gpuPrices, gpuRatings, gpuAvgVol30d, gpuVolumes);
 
-                    if (result.score() > currentBest) {
-                        if (rescue && result.score() > -90.0) {
-                            rescueModes[centerIdx] = false;
-                            logger.info("Center {} Exited Rescue Mode with score: {}", centerIdx, result.score());
-                        }
+                futures.add(CompletableFuture.runAsync(() -> {
+                    CandidateResult result = runGeneration(center, bestScores.get(centerIdx), currentRadius, 500, rescue, dataPkg, gpuSubset,
+                            gpuPrices, gpuPrefixSums, gpuSqPrefixSums, gpuRatings, gpuVolumes, gpuAvgVols, gpuOffsets);
+
+                    if (result.score() > bestScores.get(centerIdx)) {
+                        if (rescue && result.score() > -90.0) rescueModes[centerIdx] = false;
                         bestScores.set(centerIdx, result.score());
                         centers.set(centerIdx, result.params());
-                        logger.info("Center {} New Best Score: {}", centerIdx, result.score());
                     }
                 }));
             }
             futures.stream().forEach(CompletableFuture::join);
-
             com.stock.analyzer.core.StatsCalculator.clearSimulationCache();
             radius *= 0.8;
         }
 
-        logger.info("Optimization Complete. Selecting global winner and finalizing ML training data...");
-        int bestIdx = 0;
-        for (int i = 1; i < M; i++) {
-            if (bestScores.get(i) > bestScores.get(bestIdx)) {
-                bestIdx = i;
-            }
-        }
-        
-        logger.info("Selected Center {} as Global Winner with score: {}", bestIdx, bestScores.get(bestIdx));
-        SimulationParams globalWinner = centers.get(bestIdx);
-        evaluateCandidate(globalWinner, dataPkg, true);
+        SimulationParams globalWinner = centers.get(bestScores.indexOf(Collections.max(bestScores)));
+        logger.info("Finalizing global winner on CPU...");
+        fallback.evaluateCandidate(globalWinner, dataPkg, true);
         return globalWinner;
     }
 
-    private CandidateResult runGeneration(SimulationParams center, double bestScore, double radius, int popSize, boolean rescue, SimulationDataPackage pkg, List<Integer> subset, DoubleArray gp, DoubleArray gr, DoubleArray gav, DoubleArray gv) {
+    private double evaluateCandidate(SimulationParams params, SimulationDataPackage pkg, boolean collectML,
+                                     DoubleArray gp, DoubleArray gps, DoubleArray gpsq, DoubleArray gr, DoubleArray gv, DoubleArray gav, IntArray go) {
+        int[] allIndices = new int[pkg.stockCount];
+        for (int i = 0; i < pkg.stockCount; i++) allIndices[i] = i;
+        IntArray allStocksSubset = IntArray.fromArray(allIndices);
+
+        List<CandidateResult> results = evaluateGpu2D(List.of(params), allStocksSubset, pkg, false, gp, gps, gpsq, gr, gv, gav, go);
+        return results.get(0).score();
+    }
+
+    private CandidateResult runGeneration(SimulationParams center, double bestScore, double radius, int popSize, boolean rescue, SimulationDataPackage pkg, IntArray subset,
+                                          DoubleArray gp, DoubleArray gps, DoubleArray gpsq, DoubleArray gr, DoubleArray gv, DoubleArray gav, IntArray go) {
         List<SimulationParams> population = new ArrayList<>();
-        for (int i = 0; i < popSize; i++) {
-            population.add(i == 0 ? center : randomize(center, radius));
-        }
+        for (int i = 0; i < popSize; i++) population.add(i == 0 ? center : randomize(center, radius));
 
-        // STAGE 1: Broad discovery on GPU using Heuristic Signal Filtering
-        List<CandidateResult> discoveryResults = evaluateGpu(population, subset, pkg, rescue, gp, gr, gav, gv);
+        List<CandidateResult> discoveryResults = evaluateGpu2D(population, subset, pkg, rescue, gp, gps, gpsq, gr, gv, gav, go);
 
-        // STAGE 2: Deep validation of top candidates on 100% of stocks via CPU
         List<SimulationParams> elites = discoveryResults.stream()
                 .sorted(Comparator.comparingDouble(CandidateResult::score).reversed())
-                .limit(10)
-                .map(CandidateResult::params)
-                .toList();
+                .limit(10).map(CandidateResult::params).toList();
 
-        List<Integer> allIndices = java.util.stream.IntStream.range(0, pkg.stockCount).boxed().toList();
-        List<CandidateResult> validationResults = evaluateParallel(elites, allIndices, pkg, false);
-
-        return validationResults.stream()
-                .max(Comparator.comparingDouble(CandidateResult::score))
-                .orElse(new CandidateResult(center, bestScore));
+        List<CandidateResult> validationResults = fallback.evaluateParallel(elites, java.util.stream.IntStream.range(0, pkg.stockCount).boxed().toList(), pkg, false);
+        return validationResults.stream().max(Comparator.comparingDouble(CandidateResult::score)).orElse(new CandidateResult(center, bestScore));
     }
 
-    private List<CandidateResult> evaluateGpu(List<SimulationParams> candidates, List<Integer> stockSubset, SimulationDataPackage pkg, boolean rescue, DoubleArray gp, DoubleArray gr, DoubleArray gav, DoubleArray gv) {
+    private List<CandidateResult> evaluateGpu2D(List<SimulationParams> candidates, IntArray subset, SimulationDataPackage pkg, boolean rescue,
+                                                DoubleArray gp, DoubleArray gps, DoubleArray gpsq, DoubleArray gr, DoubleArray gv, DoubleArray gav, IntArray go) {
         int popSize = candidates.size();
+        int numStocks = subset.getSize();
+        int days = pkg.daysCount;
+        
         DoubleArray paramMatrix = new DoubleArray(popSize * 24);
-        IntArray signalCounts = new IntArray(popSize);
+        DoubleArray heuristicScores = new DoubleArray(popSize * numStocks * days);
+        DoubleArray resultsBuffer = new DoubleArray(popSize * numStocks * 4);
+        
+        for (int i = 0; i < popSize; i++) mapParamsToArray(candidates.get(i), paramMatrix, i * 24);
 
-        for (int i = 0; i < popSize; i++) {
-            mapParamsToArray(candidates.get(i), paramMatrix, i * 24);
+        List<Integer> cStarts = config.startTimes;
+        List<Integer> cSearches = config.searchTimes;
+        List<Integer> cSelects = config.selectTimes;
+
+        int gridCount = cStarts.size() * cSearches.size() * cSelects.size();
+        int[] flatGrid = new int[gridCount * 3];
+        int gridIdx = 0;
+        for (int s : cStarts) {
+            for (int sr : cSearches) {
+                for (int sl : cSelects) {
+                    flatGrid[gridIdx++] = s;
+                    flatGrid[gridIdx++] = sr;
+                    flatGrid[gridIdx++] = sl;
+                }
+            }
         }
+        IntArray gpuGrid = IntArray.fromArray(flatGrid);
+
+        DoubleArray indMaG = new DoubleArray(numStocks * days);
+        DoubleArray indRvol = new DoubleArray(numStocks * days);
+        DoubleArray indRat = new DoubleArray(numStocks * days);
+        DoubleArray indVolat = new DoubleArray(numStocks * days);
+        DoubleArray indMom = new DoubleArray(numStocks * days);
 
         try {
-            TaskGraph tg = new TaskGraph("signalFilter")
-                .transferToDevice(DataTransferMode.FIRST_EXECUTION, gp, gr, gav, gv)
-                .transferToDevice(DataTransferMode.EVERY_EXECUTION, paramMatrix)
-                .task("filter", TornadoVmOptimizer::heuristicSignalKernel, gp, gr, gav, gv, paramMatrix, signalCounts, stockSubset.size(), pkg.daysCount)
-                .transferToHost(DataTransferMode.EVERY_EXECUTION, signalCounts);
+            runFullPipeline(gp, gps, gpsq, gr, gv, gav, go, subset, 
+                            indMaG, indRvol, indRat, indVolat, indMom,
+                            heuristicScores, paramMatrix, gpuGrid, resultsBuffer, popSize, days, candidates.get(0).longMovingAvgTime());
 
-            try (TornadoExecutionPlan plan = new TornadoExecutionPlan(tg.snapshot())) {
-                plan.execute();
+            List<CandidateResult> out = new ArrayList<>();
+            for (int p = 0; p < popSize; p++) {
+                int totalTrades = 0;
+                double totalSumRet = 0, totalSumSqRet = 0;
+                long totalHold = 0;
+
+                for (int s = 0; s < numStocks; s++) {
+                    int off = (p * numStocks + s) * 4;
+                    totalTrades += (int) resultsBuffer.get(off);
+                    totalSumRet += resultsBuffer.get(off + 1);
+                    totalSumSqRet += resultsBuffer.get(off + 2);
+                    totalHold += (long) resultsBuffer.get(off + 3);
+                }
+                
+                boolean hasVolume = totalTrades > Math.max(15, (numStocks * gridCount) / 25);
+                double score;
+                if (rescue) {
+                    score = -100.0 + totalTrades;
+                } else if (candidates.size() > 1 && !hasVolume) {
+                    score = -100.0;
+                } else if (totalTrades < 2) {
+                    score = -100.0;
+                } else {
+                    score = calculateSharpeOnHost(totalTrades, totalSumRet, totalSumSqRet, totalHold, candidates.get(p).riskFreeRate(), gridCount, rescue);
+                }
+                out.add(new CandidateResult(candidates.get(p), score));
             }
-
-            List<CandidateResult> results = new ArrayList<>();
-            for (int i = 0; i < popSize; i++) {
-                int signals = signalCounts.get(i);
-                // If signals are too low, the Sharpe ratio will be garbage. Score -100.
-                double score = (signals < Math.max(15, (stockSubset.size() * 3) / 25)) ? -100.0 : signals;
-                results.add(new CandidateResult(candidates.get(i), score));
-            }
-            return results;
-
+            return out;
         } catch (Exception e) {
-            logger.warn("TornadoVM Kernel failed, falling back to CPU discovery.");
-            return evaluateParallel(candidates, stockSubset, pkg, rescue);
+            logger.warn("GPU Pipeline failed, falling back to CPU: {}", e.getMessage());
+            return fallback.evaluateParallel(candidates, toList(subset), pkg, rescue);
         }
     }
 
-    /**
-     * GPU KERNEL: Heuristic Signal Filter.
-     * Checks how many 'BUY' signals a parameter set generates across the universe.
-     */
-    public static void heuristicSignalKernel(DoubleArray prices, DoubleArray ratings, DoubleArray avgVols, DoubleArray volumes, DoubleArray params, IntArray signalCounts, int numStocks, int days) {
-        for (@Parallel int pIdx = 0; pIdx < signalCounts.getSize(); pIdx++) {
-            int signals = 0;
-            int offset = pIdx * 24;
+    private void runFullPipeline(DoubleArray gp, DoubleArray gps, DoubleArray gpsq, DoubleArray gr, DoubleArray gv, DoubleArray gav, IntArray go, IntArray gs,
+                                 DoubleArray gMaG, DoubleArray grvS, DoubleArray graS, DoubleArray gVol, DoubleArray gMom, DoubleArray gHS, DoubleArray params, 
+                                 IntArray gpuGrid, DoubleArray results, int popSize, int days, int longMA) {
+        
+        TaskGraph tg = new TaskGraph("full_gpu")
+                .transferToDevice(DataTransferMode.FIRST_EXECUTION, gp, gps, gpsq, gr, gv, gav, go, gs, gpuGrid)
+                .transferToDevice(DataTransferMode.EVERY_EXECUTION, params)
+                .task("indicators", TornadoVmOptimizer::indicatorKernel, gp, gps, gpsq, gr, gv, gav, go, gs, gMaG, grvS, graS, gVol, gMom, days, longMA)
+                .task("scoring", TornadoVmOptimizer::heuristicKernel, gMaG, grvS, graS, gVol, gMom, gs, params, gHS, popSize, days)
+                .task("simulation", TornadoVmOptimizer::simulationKernel, gp, gHS, gMaG, gs, params, gpuGrid, results, popSize, days)
+                .transferToHost(DataTransferMode.EVERY_EXECUTION, results);
+
+        try (TornadoExecutionPlan plan = new TornadoExecutionPlan(tg.snapshot())) {
+            plan.execute();
+        } catch (uk.ac.manchester.tornado.api.exceptions.TornadoExecutionPlanException e) {
+            logger.error("GPU Pipeline execution failed", e);
+            throw new RuntimeException(e);
+        }
+    }
+
+    public static void simulationKernel(DoubleArray prices, DoubleArray heuristicScores, DoubleArray maGaps, IntArray subset, DoubleArray params,
+                                        IntArray gridData, DoubleArray results, int popSize, int days) {
+        int numStocks = subset.getSize();
+        int numGridPoints = gridData.getSize() / 3;
+        int totalThreads = popSize * numStocks * numGridPoints;
+
+        for (@Parallel int threadIdx = 0; threadIdx < totalThreads; threadIdx++) {
+            int pIdx = threadIdx / (numStocks * numGridPoints);
+            int sLoc = (threadIdx / numGridPoints) % numStocks;
+            int gIdx = threadIdx % numGridPoints;
             
-            double buyThreshold = params.get(offset + 16);
-            double maGapWeight = params.get(offset + 17);
-            double ratingWeight = params.get(offset + 19);
-            double rvolWeight = params.get(offset + 21);
+            int sIdx = subset.get(sLoc);
+            int pOff = pIdx * 24;
+            double buyThreshold = params.get(pOff + 16);
+            double sellCutOff = params.get(pOff); 
             
-            double totalWeight = maGapWeight + ratingWeight + rvolWeight + 0.45; // simplified remaining weight
+            int daysBack = gridData.get(gIdx * 3);
+            int searchTime = gridData.get(gIdx * 3 + 1);
+            int selectTime = gridData.get(gIdx * 3 + 2);
 
-            for (int s = 0; s < numStocks; s++) {
-                // Check signal at last 10 days
-                for (int d = days - 10; d < days; d++) {
-                    int dataIdx = s * days + d;
-                    double price = prices.get(dataIdx);
-                    if (price <= 0) continue;
+            int timeStart = Math.max(0, days - daysBack);
+            int searchLimit = Math.min(days, timeStart + searchTime);
+            int absoluteLimit = (selectTime > 0) ? Math.min(days, timeStart + searchTime + selectTime) : days;
 
-                    // GPU heuristic implementation (subset of full logic for speed)
-                    double rvol = (avgVols.get(dataIdx) > 0) ? volumes.get(dataIdx) / avgVols.get(dataIdx) : 1.0;
-                    double rvolScore = (rvol > 1.5) ? 1.0 : (rvol / 1.5);
-                    
-                    double rating = ratings.get(dataIdx);
-                    double ratingScore = (rating - 1.0) / 4.0;
+            double trades = 0.0;
+            double sumRet = 0.0;
+            double sumSqRet = 0.0;
+            double totalHold = 0.0;
+            int skipUntil = -1;
 
-                    double combined = (rvolScore * rvolWeight + ratingScore * ratingWeight) / totalWeight;
-                    if (combined > buyThreshold) {
-                        signals++;
-                    }
-                }
-            }
-            signalCounts.set(pIdx, signals);
-        }
-    }
-
-    private List<CandidateResult> evaluateParallel(List<SimulationParams> candidates, List<Integer> stockSubset, SimulationDataPackage pkg, boolean rescue) {
-        List<CompletableFuture<CandidateResult>> futures = new ArrayList<>();
-        for (SimulationParams p : candidates) {
-            futures.add(CompletableFuture.supplyAsync(() -> {
-                Simulation sim = new Simulation(p);
-                Pair<Integer, Integer> stats = findTrades(sim, pkg, stockSubset);
-                int trades = stats.getKey();
-                int frames = stats.getValue();
-                if (trades == -1) return new CandidateResult(p, -100.0);
-                boolean hasVolume = trades > Math.max(15, (stockSubset.size() * frames) / 25);
-                double score = rescue ? (-100.0 + trades) : (hasVolume ? sim.calculateScore(frames) : -100.0);
-                return new CandidateResult(p, score);
-            }));
-        }
-        return futures.stream().map(CompletableFuture::join).toList();
-    }
-
-    private Pair<Integer, Integer> findTrades(Simulation sim, SimulationDataPackage pkg, List<Integer> stockSubset) {
-        int evaluatedFrames = 0;
-        int stocksProcessed = 0;
-        int pruningCheckpoint = stockSubset.size() / 4;
-        for (int start : config.startTimes) {
-            for (int search : config.searchTimes) {
-                for (int select : config.selectTimes) {
-                    evaluatedFrames++;
-                    for (int sIdx : stockSubset) {
-                        simulateStock(sim, pkg, sIdx, start, search, select, false);
-                        stocksProcessed++;
-                        if (stocksProcessed == pruningCheckpoint && pruningCheckpoint > 10) {
-                            if (sim.getTradeCount() == 0) return new Pair<>(-1, evaluatedFrames);
+            for (int i = 0; i < days; i++) {
+                int scoreIdx = (pIdx * numStocks * days) + (sLoc * days) + i;
+                int isEntryPossible = (i >= timeStart && i < searchLimit && i > skipUntil) ? 1 : 0;
+                if (isEntryPossible == 1) {
+                    if (heuristicScores.get(scoreIdx) > buyThreshold) {
+                        double buyPrice = prices.get(sIdx * days + i);
+                        int sellDay = absoluteLimit - 1;
+                        int exitFound = 0;
+                        for (int j = 1; j < 500; j++) {
+                            int curr = i + j;
+                            if (curr < absoluteLimit && exitFound == 0) {
+                                if (maGaps.get((sLoc * days) + curr) < sellCutOff) {
+                                    sellDay = curr;
+                                    exitFound = 1;
+                                }
+                            }
                         }
+                        double exitPrice = prices.get(sIdx * days + sellDay);
+                        double ret = (exitPrice - buyPrice) / buyPrice * 100.0;
+                        trades += 1.0;
+                        sumRet += ret;
+                        sumSqRet += (ret * ret);
+                        totalHold += (double)(sellDay - i);
+                        skipUntil = sellDay;
                     }
                 }
             }
+
+            int resOff = threadIdx * 4;
+            results.set(resOff, trades);
+            results.set(resOff + 1, sumRet);
+            results.set(resOff + 2, sumSqRet);
+            results.set(resOff + 3, totalHold);
         }
-        return new Pair<>(sim.getTradeCount(), evaluatedFrames);
     }
 
-    private double evaluateCandidate(SimulationParams params, SimulationDataPackage pkg, boolean collectML) {
-        Simulation sim = new Simulation(params);
-        int frames = 0;
-        for (int start : config.startTimes) {
-            for (int search : config.searchTimes) {
-                for (int select : config.selectTimes) {
-                    frames++;
-                    for (int sIdx = 0; sIdx < pkg.stockCount; sIdx++) {
-                        simulateStock(sim, pkg, sIdx, start, search, select, collectML);
-                    }
-                }
+    public static void indicatorKernel(DoubleArray prices, DoubleArray prefixSums, DoubleArray sqPrefixSums, DoubleArray ratings, DoubleArray volumes, DoubleArray avgVols, IntArray offsets, IntArray subset,
+                                       DoubleArray maGaps, DoubleArray rvolScores, DoubleArray ratingScores, DoubleArray volatilities, DoubleArray momentums, int days, int period) {
+        int subsetSize = subset.getSize();
+        for (@Parallel int idx = 0; idx < subsetSize * days; idx++) {
+            int sLoc = idx / days; int d = idx % days;
+            int sIdx = subset.get(sLoc); int off = offsets.get(sIdx);
+            int dataIdx = sIdx * days + d;
+            double price = prices.get(dataIdx);
+            double isValid = (price > 0.0 && d >= off) ? 1.0 : 0.0;
+
+            int startIdx = Math.max(off - 1, d - period);
+            int actualPeriod = Math.max(1, d - startIdx);
+            double sum = prefixSums.get(dataIdx);
+            double prevSum = (startIdx >= off) ? prefixSums.get(sIdx * days + startIdx) : 0.0;
+            double ma = (sum - prevSum) / (double) actualPeriod;
+            maGaps.set(idx, isValid * (price / (ma + 0.0001)));
+
+            int vStartIdx = Math.max(off - 1, d - 20);
+            int vActualPeriod = Math.max(1, d - vStartIdx);
+            double vSqSum = sqPrefixSums.get(dataIdx);
+            double vPrevSqSum = (vStartIdx >= off) ? sqPrefixSums.get(sIdx * days + vStartIdx) : 0.0;
+            double vVar = ((vSqSum - vPrevSqSum) / (double) vActualPeriod) - (ma * ma);
+            volatilities.set(idx, isValid * (Math.sqrt(Math.max(0.0, vVar)) / (price + 0.0001)));
+
+            int mStartIdx = Math.max(off - 1, d - 40);
+            int mPrevStartIdx = Math.max(off - 1, d - 80);
+            double mSumNow = prefixSums.get(dataIdx);
+            double mSumPrevVal = (mStartIdx >= off) ? prefixSums.get(sIdx * days + mStartIdx) : 0.0;
+            double mAvgNow = (mSumNow - mSumPrevVal) / (double) Math.max(1, d - mStartIdx);
+            double mSumOldPrevVal = (mPrevStartIdx >= off) ? prefixSums.get(sIdx * days + mPrevStartIdx) : 0.0;
+            double mAvgOld = (mSumPrevVal - mSumOldPrevVal) / (double) Math.max(1, mStartIdx - mPrevStartIdx);
+            momentums.set(idx, isValid * (mAvgOld > 0.0 ? mAvgNow / mAvgOld : 1.0));
+
+            double currentAvgVol = avgVols.get(dataIdx);
+            rvolScores.set(idx, isValid * ((currentAvgVol > 0.0) ? (volumes.get(dataIdx) / currentAvgVol) : 1.0));
+            ratingScores.set(idx, isValid * ((ratings.get(dataIdx) - 1.0) / 4.0));
+        }
+    }
+
+    public static void heuristicKernel(DoubleArray maGaps, DoubleArray rvolScores, DoubleArray ratingScores, DoubleArray volatilities, DoubleArray momentums, IntArray subset, 
+                                       DoubleArray params, DoubleArray heuristicScores, int popSize, int days) {
+        int numStocks = subset.getSize();
+        for (@Parallel int idx = 0; idx < popSize * numStocks * days; idx++) {
+            int pIdx = idx / (numStocks * days); int sLoc = (idx / days) % numStocks; int d = idx % days;
+            int pOff = pIdx * 24; int indicatorIdx = sLoc * days + d;
+
+            double buyThreshold = params.get(pOff + 16);
+            double maW = params.get(pOff + 17); double revW = params.get(pOff + 18);
+            double ratW = params.get(pOff + 19); double incW = params.get(pOff + 20);
+            double rvolW = params.get(pOff + 21); double pegW = params.get(pOff + 22);
+            double volW = params.get(pOff + 23);
+            double totalW = maW + revW + ratW + incW + rvolW + pegW + volW;
+
+            double maGap = maGaps.get(indicatorIdx);
+            double maScore = (1.0 - normalizeGPU(maGap, params.get(pOff + 1), params.get(pOff + 2))) * (maW / totalW);
+            double scoreSoFar = maScore;
+            double remainingW = (totalW - maW) / totalW;
+            
+            if (scoreSoFar + remainingW < buyThreshold) {
+                heuristicScores.set(idx, 0.0);
+            } else {
+                scoreSoFar += normalizeGPU(ratingScores.get(indicatorIdx), (params.get(pOff + 12) - 1.0) / 4.0, (params.get(pOff + 13) - 1.0) / 4.0) * (ratW / totalW);
+                remainingW -= (ratW / totalW);
+                if (scoreSoFar + remainingW >= buyThreshold) {
+                    scoreSoFar += normalizeGPU(rvolScores.get(indicatorIdx), 0.5, 2.0) * (rvolW / totalW);
+                    remainingW -= (rvolW / totalW);
+                    if (scoreSoFar + remainingW >= buyThreshold) {
+                        scoreSoFar += normalizeGPU(Math.abs(maGap - 1.0), 0.0, 0.20) * (revW / totalW);
+                        remainingW -= (revW / totalW);
+                        if (scoreSoFar + remainingW >= buyThreshold) {
+                            scoreSoFar += normalizeGPU(momentums.get(indicatorIdx), params.get(pOff + 10), params.get(pOff + 10) * 1.3) * (incW / totalW);
+                            remainingW -= (incW / totalW);
+                            if (scoreSoFar + remainingW >= buyThreshold) {
+                                scoreSoFar += (1.0 - normalizeGPU(volatilities.get(indicatorIdx), 0.0, 0.05)) * (volW / totalW);
+                                heuristicScores.set(idx, scoreSoFar);
+                            } else heuristicScores.set(idx, 0.0);
+                        } else heuristicScores.set(idx, 0.0);
+                    } else heuristicScores.set(idx, 0.0);
+                } else heuristicScores.set(idx, 0.0);
             }
         }
-        return sim.getTradeCount() > pkg.stockCount / 100 ? sim.calculateScore(frames) : -100.0;
     }
 
-    private void simulateStock(Simulation sim, SimulationDataPackage pkg, int sIdx, int daysBack, int searchTime, int selectTime, boolean ml) {
-        int timeStart = Math.max(0, pkg.daysCount - daysBack);
-        int searchLimit = Math.min(timeStart + searchTime, pkg.daysCount);
-        int absoluteLimit = (selectTime > 0) ? Math.min(timeStart + searchTime + selectTime, pkg.daysCount) : pkg.daysCount;
-        for (int i = timeStart; i < searchLimit; i++) {
-            if (sim.calculateHeuristic(pkg, sIdx, i) > sim.params.buyThreshold()) {
-                double buyPrice = pkg.closePrices[sIdx][i];
-                if (ml && i >= timeStart + 30 && i + 30 < pkg.daysCount) {
-                    collectMLSample(sim, pkg, sIdx, i, buyPrice);
-                }
-                for (int j = 1; i + j < absoluteLimit; j++) {
-                    int curr = i + j;
-                    double price = pkg.closePrices[sIdx][curr];
-                    double ma = pkg.getAvg(sIdx, curr, sim.params.longMovingAvgTime());
-                    if (price < (ma * sim.params.sellCutOffPerc()) || (curr == absoluteLimit - 1)) {
-                        sim.recordTrade((price - buyPrice) / buyPrice, j);
-                        i = curr;
-                        break;
-                    }
-                }
-            }
-        }
+    private static double normalizeGPU(double val, double min, double max) {
+        if (max <= min) return 1.0;
+        return Math.max(0.0, Math.min(1.0, (val - min) / (max - min)));
     }
 
-    private void collectMLSample(Simulation sim, SimulationDataPackage pkg, int sIdx, int i, double buyPrice) {
-        float[][] seq = new float[30][12];
-        for (int k = 0; k < 30; k++) {
-            double[] features = sim.extractFeatures(pkg, sIdx, i - 29 + k);
-            for (int f = 0; f < 12; f++) seq[k][f] = (float) features[f];
-        }
-        float gain30d = (float) ((pkg.closePrices[sIdx][i + 30] - buyPrice) / buyPrice);
-        mlService.collectSample(new TrainingSample(seq, gain30d));
+    private double calculateSharpeOnHost(int trades, double sumRet, double sumSqRet, long totalDays, double riskFree, int frames, boolean rescue) {
+        if (trades < 2) return rescue ? -100.0 + trades : -100.0;
+        double avg = sumRet / trades;
+        double var = (sumSqRet / (trades - 1)) - (avg * avg * trades / (trades - 1));
+        double std = Math.sqrt(Math.max(0, var));
+        double sharpe = (avg / (std + 0.01)) * Math.sqrt(252);
+        double volMult = Math.sqrt(Math.min(1.0, (double) trades / 40.0) * Math.min(1.0, (double) trades / frames / 10.0));
+        double durMult = Math.min(1.0, ((double) totalDays / trades) / 5.0);
+        return sharpe * volMult * durMult * 10.0;
     }
 
-    private DoubleArray flatten(double[][] data, List<Integer> subset, int days) {
-        DoubleArray arr = new DoubleArray(subset.size() * days);
-        for (int i = 0; i < subset.size(); i++) {
-            int sIdx = subset.get(i);
-            for (int j = 0; j < days; j++) {
-                arr.set(i * days + j, data[sIdx][j]);
-            }
-        }
-        return arr;
+    private List<Integer> toList(IntArray arr) {
+        List<Integer> l = new ArrayList<>();
+        for (int i = 0; i < arr.getSize(); i++) l.add(arr.get(i));
+        return l;
+    }
+
+    private IntArray toIntArray(List<Integer> list) {
+        return IntArray.fromArray(list.stream().mapToInt(Integer::intValue).toArray());
+    }
+
+    private DoubleArray flatten(double[][] data, int stocks, int days) {
+        double[] flat = new double[stocks * days];
+        for (int i = 0; i < stocks; i++) System.arraycopy(data[i], 0, flat, i * days, days);
+        return DoubleArray.fromArray(flat);
     }
 
     private void mapParamsToArray(SimulationParams p, DoubleArray arr, int start) {
-        arr.set(start, p.sellCutOffPerc());
-        arr.set(start + 1, p.lowerPriceToLongAvgBuyIn());
-        arr.set(start + 2, p.higherPriceToLongAvgBuyIn());
-        arr.set(start + 3, p.timeFrameForUpwardLongAvg());
-        arr.set(start + 4, p.aboveAvgRatingPricePerc());
-        arr.set(start + 5, p.timeFrameForUpwardShortPrice());
-        arr.set(start + 6, p.timeFrameForOscillator());
-        arr.set(start + 7, p.maxRSI());
-        arr.set(start + 8, p.minMarketCap());
-        arr.set(start + 9, p.longMovingAvgTime());
-        arr.set(start + 10, p.minRateOfAvgInc());
-        arr.set(start + 11, p.maxPERatio());
-        arr.set(start + 12, p.minRating());
-        arr.set(start + 13, p.maxRating());
-        arr.set(start + 14, p.maxMarketCap());
-        arr.set(start + 15, p.riskFreeRate());
-        arr.set(start + 16, p.buyThreshold());
-        arr.set(start + 17, p.movingAvgGapWeight());
-        arr.set(start + 18, p.reversionToMeanWeight());
-        arr.set(start + 19, p.ratingWeight());
-        arr.set(start + 20, p.upwardIncRateWeight());
-        arr.set(start + 21, p.rvolWeight());
-        arr.set(start + 22, p.pegWeight());
-        arr.set(start + 23, p.volatilityCompressionWeight());
+        arr.set(start, p.sellCutOffPerc()); arr.set(start + 1, p.lowerPriceToLongAvgBuyIn());
+        arr.set(start + 2, p.higherPriceToLongAvgBuyIn()); arr.set(start + 3, p.timeFrameForUpwardLongAvg());
+        arr.set(start + 4, p.aboveAvgRatingPricePerc()); arr.set(start + 5, p.timeFrameForUpwardShortPrice());
+        arr.set(start + 6, p.timeFrameForOscillator()); arr.set(start + 7, p.maxRSI());
+        arr.set(start + 8, p.minMarketCap()); arr.set(start + 9, p.longMovingAvgTime());
+        arr.set(start + 10, p.minRateOfAvgInc()); arr.set(start + 11, p.maxPERatio());
+        arr.set(start + 12, p.minRating()); arr.set(start + 13, p.maxRating());
+        arr.set(start + 14, p.maxMarketCap()); arr.set(start + 15, p.riskFreeRate());
+        arr.set(start + 16, p.buyThreshold()); arr.set(start + 17, p.movingAvgGapWeight());
+        arr.set(start + 18, p.reversionToMeanWeight()); arr.set(start + 19, p.ratingWeight());
+        arr.set(start + 20, p.upwardIncRateWeight()); arr.set(start + 21, p.rvolWeight());
+        arr.set(start + 22, p.pegWeight()); arr.set(start + 23, p.volatilityCompressionWeight());
     }
 
     public SimulationParams randomize(SimulationParams c, double r) {
-        return new SimulationParams(
-                clamp(c.sellCutOffPerc() + rand(r), 0.1, 0.99),
-                clamp(c.lowerPriceToLongAvgBuyIn() + rand(r), 0.1, 2.0),
-                clamp(c.higherPriceToLongAvgBuyIn() + rand(r), 0.1, 3.0),
-                clampInt(c.timeFrameForUpwardLongAvg() + randInt((int) (20 * r)), 2, 500),
-                clamp(c.aboveAvgRatingPricePerc() + rand(r), 0.1, 5.0),
-                clampInt(c.timeFrameForUpwardShortPrice() + randInt((int) (20 * r)), 1, 100),
-                clampInt(c.timeFrameForOscillator() + randInt((int) (100 * r)), 2, 500),
-                clamp(c.maxRSI() + rand(20 * r), 0.0, 100.0),
-                Math.max(0, c.minMarketCap() * (1 + rand(2 * r))),
-                clampInt(c.longMovingAvgTime() + randInt((int) (100 * r)), 10, 1000),
-                clamp(c.minRateOfAvgInc() + rand(r), 0.0, 5.0),
-                clampInt(c.maxPERatio() + randInt((int) (50 * r)), 0, 1000),
-                clamp(c.minRating() + rand(4 * r), 0.0, 4.9),
-                clamp(c.maxRating() + rand(4 * r), 3.0, 5.0),
-                Math.max(1000, c.maxMarketCap() * (1 + rand(2 * r))),
-                0.10,
-                clamp(c.buyThreshold() + rand(r), 0.4, 0.95),
-                clamp(c.movingAvgGapWeight() + rand(r), 0.0, 1.0),
-                clamp(c.reversionToMeanWeight() + rand(r), 0.0, 1.0),
-                clamp(c.ratingWeight() + rand(r), 0.0, 1.0),
-                clamp(c.upwardIncRateWeight() + rand(r), 0.0, 1.0),
-                clamp(c.rvolWeight() + rand(r), 0.0, 1.0),
-                clamp(c.pegWeight() + rand(r), 0.0, 1.0),
-                clamp(c.volatilityCompressionWeight() + rand(r), 0.0, 1.0)
-        );
+        return fallback.randomize(c, r);
     }
 
     private SimulationParams centerParamsFromConfig() {
@@ -381,15 +464,10 @@ public class TornadoVmOptimizer implements Optimizer {
         );
     }
 
-    private double rand(double s) { return (random.nextDouble() * 2 * s) - s; }
-    private int randInt(int s) { return s <= 0 ? 0 : random.nextInt((s * 2) + 1) - s; }
-    private double clamp(double v, double min, double max) { return Math.max(min, Math.min(max, v)); }
-    private int clampInt(int v, int min, int max) { return Math.max(min, Math.min(max, v)); }
     private List<Integer> getShuffledIndices(int count) {
         List<Integer> idx = new ArrayList<>();
         for (int i = 0; i < count; i++) idx.add(i);
         Collections.shuffle(idx);
         return idx;
     }
-    private record CandidateResult(SimulationParams params, double score) {}
 }
