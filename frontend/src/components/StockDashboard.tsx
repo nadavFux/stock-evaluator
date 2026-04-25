@@ -80,9 +80,11 @@ const StockDashboard: React.FC = () => {
         localStorage.setItem('stockAnalyzerConfig', JSON.stringify(currentConfig));
     }, [currentConfig]);
 
+    const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8080';
+
     useEffect(() => {
         const client = new Client({
-            webSocketFactory: () => new SockJS('http://localhost:8080/ws-stock'),
+            webSocketFactory: () => new SockJS(`${API_BASE_URL}/ws-stock`),
             onConnect: () => {
                 client.subscribe('/topic/updates', (message) => {
                     const update: AnalysisUpdate = JSON.parse(message.body);
@@ -102,7 +104,7 @@ const StockDashboard: React.FC = () => {
 
     const fetchProfiles = async () => {
         try {
-            const res = await fetch('http://localhost:8080/api/profiles');
+            const res = await fetch(`${API_BASE_URL}/api/profiles`);
             const data = await res.json();
             setProfiles(data);
         } catch (error) {
@@ -148,7 +150,7 @@ const StockDashboard: React.FC = () => {
         setLogs([]);
         setPercent(0);
         try {
-            await fetch('http://localhost:8080/api/analysis/backtest', {
+            await fetch(`${API_BASE_URL}/api/analysis/backtest`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(configToUse)
@@ -163,7 +165,7 @@ const StockDashboard: React.FC = () => {
         setLogs([]);
         setPercent(0);
         try {
-            await fetch('http://localhost:8080/api/analysis/opportunities', {
+            await fetch(`${API_BASE_URL}/api/analysis/opportunities`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(configToUse)
@@ -180,7 +182,7 @@ const StockDashboard: React.FC = () => {
         setLogs([]);
         setPercent(0);
         try {
-            const response = await fetch('http://localhost:8080/api/analysis/run', {
+            const response = await fetch(`${API_BASE_URL}/api/analysis/run`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(currentConfig)
@@ -205,7 +207,7 @@ const StockDashboard: React.FC = () => {
 
     const exportParams = async () => {
         try {
-            const res = await fetch('http://localhost:8080/api/analysis/export-params');
+            const res = await fetch(`${API_BASE_URL}/api/analysis/export-params`);
             const data = await res.json();
             if (data.content) {
                 const blob = new Blob([data.content], { type: 'text/yaml' });
@@ -224,7 +226,7 @@ const StockDashboard: React.FC = () => {
 
     const savePreset = async (name: string, description: string, config: any) => {
         try {
-            await fetch('http://localhost:8080/api/profiles', {
+            await fetch(`${API_BASE_URL}/api/profiles`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
@@ -242,7 +244,7 @@ const StockDashboard: React.FC = () => {
     const addComparison = async (ticker: string) => {
         if (!ticker || comparisonTickers.includes(ticker.toUpperCase())) return;
         try {
-            const res = await fetch(`http://localhost:8080/api/stocks/${ticker.toUpperCase()}/graph`);
+            const res = await fetch(`${API_BASE_URL}/api/stocks/${ticker.toUpperCase()}/graph`);
             const data = await res.json();
             if (data) {
                 setComparisonData(prev => [...prev, data]);

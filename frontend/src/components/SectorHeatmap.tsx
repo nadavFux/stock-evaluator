@@ -12,7 +12,8 @@ const SectorHeatmap: React.FC<{ sectors: number[], exchanges: string[] }> = ({ s
             try {
                 const sectorParams = sectors.join(',');
                 const exchangeParams = exchanges.join(',');
-                const res = await fetch(`http://localhost:8080/api/sectors/performance?sectors=${sectorParams}&exchanges=${exchangeParams}`);
+                const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8080';
+                const res = await fetch(`${API_BASE_URL}/api/sectors/performance?sectors=${sectorParams}&exchanges=${exchangeParams}`);
                 const sectorResults = await res.json();
                 
                 const formattedData = sectorResults.map((s: any) => ({
