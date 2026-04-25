@@ -31,48 +31,84 @@ public class ParamOptimizer {
      * Executes the full optimization lifecycle.
      */
     public SimulationParams optimize(List<StockGraphState> allStocks) {
-        logger.info("Starting Param Optimization Workflow...");
+        logger.info("Starting Multi-Start Param Optimization Workflow...");
         SimulationDataPackage dataPkg = new SimulationDataPackage(allStocks);
 
-        SimulationParams center = centerParamsFromConfig();
-        double bestScore = evaluateCandidate(center, dataPkg, false);
-        logger.info("Initial Baseline Score: {}", bestScore);
+        int M = 5;
+        List<SimulationParams> centers = new ArrayList<>();
+        centers.add(centerParamsFromConfig());
+        for (int i = 1; i < M; i++) {
+            // Heavily randomize to spread across parameter space
+            centers.add(randomize(centers.get(0), 1.0));
+        }
 
-        boolean rescueMode = (bestScore == -100.0);
+        List<Double> bestScores = new ArrayList<>(Collections.nCopies(M, -100.0));
+        boolean[] rescueModes = new boolean[M];
+        
+        for (int i = 0; i < M; i++) {
+            double initialScore = evaluateCandidate(centers.get(i), dataPkg, false);
+            bestScores.set(i, initialScore);
+            rescueModes[i] = (initialScore == -100.0);
+            logger.info("Center {} Initial Score: {}", i, initialScore);
+        }
+
         double radius = 0.25;
 
         for (int gen = 1; gen <= 10 && radius >= 0.05; gen++) {
             logger.info("Generation {} (Radius: {})", gen, radius);
 
-            CandidateResult result = runGeneration(center, bestScore, radius, 500, rescueMode, dataPkg);
+            // Generate subset ONCE per generation for consistent noise across all centers
+            List<Integer> subset = getShuffledIndices(dataPkg.stockCount).subList(0, Math.max(1, dataPkg.stockCount / 2));
 
-            if (result.score() > bestScore) {
-                if (rescueMode && result.score() > -90.0) {
-                    rescueMode = false;
-                    logger.info("Exited Rescue Mode with score: {}", result.score());
-                }
-                bestScore = result.score();
-                center = result.params();
-                logger.info("New Best Score: {}", bestScore);
+            List<CompletableFuture<Void>> futures = new ArrayList<>();
+            for (int c = 0; c < M; c++) {
+                final int centerIdx = c;
+                SimulationParams center = centers.get(centerIdx);
+                double currentBest = bestScores.get(centerIdx);
+                boolean rescue = rescueModes[centerIdx];
+
+                final double currentRadius = radius;
+                futures.add(CompletableFuture.runAsync(() -> {
+                    CandidateResult result = runGeneration(center, currentBest, currentRadius, 500, rescue, dataPkg, subset);
+
+                    if (result.score() > currentBest) {
+                        if (rescue && result.score() > -90.0) {
+                            rescueModes[centerIdx] = false;
+                            logger.info("Center {} Exited Rescue Mode with score: {}", centerIdx, result.score());
+                        }
+                        bestScores.set(centerIdx, result.score());
+                        centers.set(centerIdx, result.params());
+                        logger.info("Center {} New Best Score: {}", centerIdx, result.score());
+                    }
+                }));
             }
+            futures.stream().forEach(CompletableFuture::join);
 
             com.stock.analyzer.core.StatsCalculator.clearSimulationCache();
             radius *= 0.8;
         }
 
-        logger.info("Optimization Complete. Finalizing ML training data...");
-        evaluateCandidate(center, dataPkg, true);
-        return center;
+        logger.info("Optimization Complete. Selecting global winner and finalizing ML training data...");
+        int bestIdx = 0;
+        for (int i = 1; i < M; i++) {
+            if (bestScores.get(i) > bestScores.get(bestIdx)) {
+                bestIdx = i;
+            }
+        }
+        
+        logger.info("Selected Center {} as Global Winner with score: {}", bestIdx, bestScores.get(bestIdx));
+        SimulationParams globalWinner = centers.get(bestIdx);
+        evaluateCandidate(globalWinner, dataPkg, true);
+        return globalWinner;
     }
 
-    private CandidateResult runGeneration(SimulationParams center, double bestScore, double radius, int popSize, boolean rescue, SimulationDataPackage pkg) {
+    private CandidateResult runGeneration(SimulationParams center, double bestScore, double radius, int popSize, boolean rescue, SimulationDataPackage pkg, List<Integer> subset) {
         List<SimulationParams> population = new ArrayList<>();
         for (int i = 0; i < popSize; i++) {
             population.add(i == 0 ? center : randomize(center, radius));
         }
 
-        // STAGE 1: Broad discovery on a 50% subset of stocks
-        List<Integer> subset = getShuffledIndices(pkg.stockCount).subList(0, Math.max(1, pkg.stockCount / 2));
+        // STAGE 1: Broad discovery on the provided subset
         List<CandidateResult> discoveryResults = evaluateParallel(population, subset, pkg, rescue);
 
         // STAGE 2: Deep validation of top candidates on 100% of stocks

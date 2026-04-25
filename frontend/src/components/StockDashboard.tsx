@@ -83,15 +83,33 @@ const StockDashboard: React.FC = () => {
     const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8080';
 
     useEffect(() => {
+        const wsUrl = `${API_BASE_URL}/ws-stock`;
+        console.log(`[WebSocket] Attempting connection to: ${wsUrl}`);
+
         const client = new Client({
-            webSocketFactory: () => new SockJS(`${API_BASE_URL}/ws-stock`),
+            webSocketFactory: () => new SockJS(wsUrl, null, {
+                transports: ['websocket'], // Force WebSocket to bypass problematic /info CORS check
+                sessionId: 10,
+                // Add this to help bypass localtunnel reminder if supported by your version
+                headers: { 'bypass-tunnel-reminder': 'true' }
+            }),
             onConnect: () => {
+                console.log('[WebSocket] Connected successfully');
                 client.subscribe('/topic/updates', (message) => {
                     const update: AnalysisUpdate = JSON.parse(message.body);
                     handleUpdate(update);
                 });
             },
+            onStompError: (frame) => {
+                console.error('[WebSocket] STOMP Error:', frame.headers['message']);
+                setLogs(prev => [`[SYSTEM] WebSocket STOMP Error: ${frame.headers['message']}`, ...prev]);
+            },
+            onWebSocketError: (event) => {
+                console.error('[WebSocket] Transport Error:', event);
+                setLogs(prev => [`[SYSTEM] WebSocket Connection Failed. Check tunnel bypass page.`, ...prev]);
+            }
         });
+
         client.activate();
         stompClient.current = client;
         
