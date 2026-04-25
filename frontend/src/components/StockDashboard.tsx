@@ -171,7 +171,7 @@ const StockDashboard: React.FC = () => {
     const fetchProfiles = useCallback(async () => {
         try {
             const res = await fetch(`${API_BASE_URL}/api/profiles`, {
-                headers: { 'Bypass-Tunnel-Reminder': 'true' }
+                headers: { 'bypass-tunnel-reminder': 'true' }
             });
             if (!res.ok) throw new Error('Backend failed to return profiles');
             const data = await res.json() as Profile[];
@@ -266,7 +266,7 @@ const StockDashboard: React.FC = () => {
                 method: 'POST',
                 headers: { 
                     'Content-Type': 'application/json',
-                    'Bypass-Tunnel-Reminder': 'true'
+                    'bypass-tunnel-reminder': 'true'
                 },
                 body: JSON.stringify(configToUse)
             });
@@ -284,7 +284,7 @@ const StockDashboard: React.FC = () => {
                 method: 'POST',
                 headers: { 
                     'Content-Type': 'application/json',
-                    'Bypass-Tunnel-Reminder': 'true'
+                    'bypass-tunnel-reminder': 'true'
                 },
                 body: JSON.stringify(configToUse)
             });
@@ -304,7 +304,7 @@ const StockDashboard: React.FC = () => {
                 method: 'POST',
                 headers: { 
                     'Content-Type': 'application/json',
-                    'Bypass-Tunnel-Reminder': 'true'
+                    'bypass-tunnel-reminder': 'true'
                 },
                 body: JSON.stringify(currentConfig)
             });
@@ -329,7 +329,7 @@ const StockDashboard: React.FC = () => {
     const exportParams = async () => {
         try {
             const res = await fetch(`${API_BASE_URL}/api/analysis/export-params`, {
-                headers: { 'Bypass-Tunnel-Reminder': 'true' }
+                headers: { 'bypass-tunnel-reminder': 'true' }
             });
             const data = await res.json() as { content?: string, error?: string };
             if (data.content) {
@@ -353,7 +353,7 @@ const StockDashboard: React.FC = () => {
                 method: 'POST',
                 headers: { 
                     'Content-Type': 'application/json',
-                    'Bypass-Tunnel-Reminder': 'true'
+                    'bypass-tunnel-reminder': 'true'
                 },
                 body: JSON.stringify({
                     name,
@@ -371,7 +371,7 @@ const StockDashboard: React.FC = () => {
         if (!ticker || comparisonTickers.includes(ticker.toUpperCase())) return;
         try {
             const res = await fetch(`${API_BASE_URL}/api/stocks/${ticker.toUpperCase()}/graph`, {
-                headers: { 'Bypass-Tunnel-Reminder': 'true' }
+                headers: { 'bypass-tunnel-reminder': 'true' }
             });
 
             const data = await res.json();
