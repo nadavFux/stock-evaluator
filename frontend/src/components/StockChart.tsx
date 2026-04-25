@@ -1,12 +1,31 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { createChart, ColorType, CandlestickSeries, LineSeries, HistogramSeries, createSeriesMarkers } from 'lightweight-charts';
-import type { IChartApi } from 'lightweight-charts';
+import type { IChartApi, ISeriesApi, SeriesType, CandlestickData, LineData, HistogramData, Time } from 'lightweight-charts';
 import { Maximize2, Minimize2, Pencil, MousePointer2 } from 'lucide-react';
 
+interface Stock {
+    ticker_symbol: string;
+    name: string;
+}
+
+interface StockGraphState {
+    stock: Stock;
+    dates: string[];
+    closePrices: number[];
+    volumes?: number[];
+    avgs?: (number | null)[];
+}
+
+interface TradePoint {
+    date: string;
+    type: 'BUY' | 'SELL';
+    price: number;
+}
+
 interface StockChartProps {
-    data: any; // StockGraphState
-    markers?: any[]; // TradePoint[]
-    comparisonData?: any[]; // StockGraphState[]
+    data: StockGraphState;
+    markers?: TradePoint[];
+    comparisonData?: StockGraphState[];
 }
 
 const StockChart: React.FC<StockChartProps> = ({ data, markers, comparisonData = [] }) => {
@@ -72,21 +91,21 @@ const StockChart: React.FC<StockChartProps> = ({ data, markers, comparisonData =
         }
 
         const firstPrice = data.closePrices[0];
-        const chartData: any[] = [];
-        const volData: any[] = [];
+        const chartData: (CandlestickData<Time> | LineData<Time>)[] = [];
+        const volData: HistogramData<Time>[] = [];
 
         data.closePrices.forEach((price: number, i: number) => {
             if (data.dates[i] === undefined) return;
-            const time = data.dates[i];
+            const time = data.dates[i] as Time;
             
             if (isComparison) {
-                chartData.push({
+                (chartData as LineData<Time>[]).push({
                     time,
                     value: ((price - firstPrice) / firstPrice) * 100,
                 });
             } else {
                 const open = i > 0 ? data.closePrices[i-1] : price;
-                chartData.push({
+                (chartData as CandlestickData<Time>[]).push({
                     time,
                     open: open,
                     high: Math.max(open, price) * 1.005,
@@ -105,15 +124,20 @@ const StockChart: React.FC<StockChartProps> = ({ data, markers, comparisonData =
         });
 
         if (maSeries && data.avgs) {
-            const maData = data.avgs.map((avg: number, i: number) => {
+            const maData = data.avgs.map((avg: number | null, i: number) => {
                 if (data.dates[i] === undefined || avg === null || avg === undefined) return null;
-                return { time: data.dates[i], value: avg };
-            }).filter(Boolean);
-            maSeries.setData(maData as any);
+                return { time: data.dates[i] as Time, value: avg };
+            }).filter((d): d is LineData<Time> => d !== null);
+            maSeries.setData(maData);
         }
 
-        mainSeries.setData(chartData as any);
-        if (volumeSeries && volData.length) volumeSeries.setData(volData as any);
+        if (isComparison) {
+            (mainSeries as ISeriesApi<"Line">).setData(chartData as LineData<Time>[]);
+        } else {
+            (mainSeries as ISeriesApi<"Candlestick">).setData(chartData as CandlestickData<Time>[]);
+        }
+        
+        if (volumeSeries && volData.length) volumeSeries.setData(volData);
 
         // Comparison Series
         if (isComparison) {
@@ -126,10 +150,10 @@ const StockChart: React.FC<StockChartProps> = ({ data, markers, comparisonData =
                 });
                 const compFirstPrice = comp.closePrices[0];
                 const compData = comp.closePrices.map((p: number, i: number) => ({
-                    time: comp.dates[i],
+                    time: comp.dates[i] as Time,
                     value: ((p - compFirstPrice) / compFirstPrice) * 100,
-                })).filter((d: any) => d.time);
-                compSeries.setData(compData as any);
+                })).filter((d) => d.time);
+                compSeries.setData(compData);
             });
         }
 
@@ -141,16 +165,16 @@ const StockChart: React.FC<StockChartProps> = ({ data, markers, comparisonData =
                 tooltipRef.current.style.display = 'none';
             } else {
                 tooltipRef.current.style.display = 'block';
-                const dataPoint = param.seriesData.get(mainSeries);
-                const volumePoint = volumeSeries ? param.seriesData.get(volumeSeries) : null;
+                const dataPoint = param.seriesData.get(mainSeries as ISeriesApi<SeriesType>) as CandlestickData<Time> | LineData<Time> | undefined;
+                const volumePoint = volumeSeries ? param.seriesData.get(volumeSeries as ISeriesApi<SeriesType>) as HistogramData<Time> | undefined : null;
                 
                 if (dataPoint) {
-                    const price = (dataPoint as any).value !== undefined ? (dataPoint as any).value : (dataPoint as any).close;
-                    const vol = (volumePoint as any)?.value;
+                    const price = 'value' in dataPoint ? dataPoint.value : dataPoint.close;
+                    const vol = volumePoint?.value;
                     
                     tooltipRef.current.innerHTML = `
                         <div class="flex flex-col gap-1">
-                            <div class="text-slate-400 font-bold text-[10px] uppercase tracking-widest">${param.time}</div>
+                            <div class="text-slate-400 font-bold text-[10px] uppercase tracking-widest">${param.time.toString()}</div>
                             <div class="flex items-center justify-between gap-4">
                                 <span class="text-white text-lg font-black">${isComparison ? price.toFixed(2) + '%' : '$' + price.toFixed(2)}</span>
                                 ${vol ? `<span class="text-blue-400 font-mono text-xs">V: ${(vol / 1e6).toFixed(1)}M</span>` : ''}
@@ -160,7 +184,6 @@ const StockChart: React.FC<StockChartProps> = ({ data, markers, comparisonData =
                 }
                 
                 const toolWidth = 160;
-                const toolHeight = 60;
                 let left = param.point.x + 20;
                 if (left > chartContainerRef.current.clientWidth - toolWidth) {
                     left = param.point.x - toolWidth - 20;
@@ -174,13 +197,13 @@ const StockChart: React.FC<StockChartProps> = ({ data, markers, comparisonData =
         // Add Markers
         if (!isComparison && markers && markers.length > 0) {
             const chartMarkers = markers.map(m => ({
-                time: m.date,
-                position: m.type === 'BUY' ? 'belowBar' : 'aboveBar',
+                time: m.date as Time,
+                position: (m.type === 'BUY' ? 'belowBar' : 'aboveBar') as 'belowBar' | 'aboveBar',
                 color: m.type === 'BUY' ? '#10b981' : '#ef4444',
-                shape: m.type === 'BUY' ? 'arrowUp' : 'arrowDown',
+                shape: (m.type === 'BUY' ? 'arrowUp' : 'arrowDown') as 'arrowUp' | 'arrowDown',
                 text: m.type
             }));
-            createSeriesMarkers(mainSeries as any, chartMarkers as any);
+            createSeriesMarkers(mainSeries as ISeriesApi<SeriesType>, chartMarkers);
         }
 
         chart.timeScale().fitContent();
@@ -198,7 +221,7 @@ const StockChart: React.FC<StockChartProps> = ({ data, markers, comparisonData =
             window.removeEventListener('resize', handleResize);
             chart.remove();
         };
-    }, [data, isFullscreen, comparisonData, tool]);
+    }, [data, isFullscreen, comparisonData, tool, markers]);
 
     return (
         <div className={`relative ${isFullscreen ? 'fixed inset-0 z-[200] bg-[#0f172a] p-4' : 'w-full h-full'}`}>

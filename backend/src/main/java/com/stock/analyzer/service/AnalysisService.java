@@ -30,6 +30,9 @@ public class AnalysisService {
     private final GraphingService graphingService;
     private boolean isRunning = false;
 
+    @org.springframework.beans.factory.annotation.Value("${optimizer.type:cpu}")
+    private String optimizerType;
+
     public AnalysisService(SimpMessagingTemplate messagingTemplate, StockDataService dataService, GraphingService graphingService) {
         this.messagingTemplate = messagingTemplate;
         this.dataService = dataService;
@@ -52,7 +55,7 @@ public class AnalysisService {
                 }
 
                 broadcast("PROGRESS", "Optimizing parameters...");
-                ParamOptimizer optimizer = new ParamOptimizer(config);
+                Optimizer optimizer = OptimizerFactory.create(optimizerType, config);
                 SimulationParams bestParams = optimizer.optimize(allStocks);
 
                 // Save best params

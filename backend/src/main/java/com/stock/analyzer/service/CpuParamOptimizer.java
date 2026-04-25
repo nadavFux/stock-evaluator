@@ -11,18 +11,19 @@ import java.util.concurrent.CompletableFuture;
 
 /**
  * Intelligent parameter optimizer using Iterative Random Search with Zoom Optimization.
- * Designed to find the most robust, risk-adjusted trading parameters across a stock universe.
+ * Uses CPU-based multithreaded evaluation with statistical pruning.
  */
-public class ParamOptimizer {
-    private static final Logger logger = LoggerFactory.getLogger(ParamOptimizer.class);
+public class CpuParamOptimizer implements Optimizer {
+    private static final Logger logger = LoggerFactory.getLogger(CpuParamOptimizer.class);
     private final SimulationRangeConfig config;
     private final MLModelService mlService = new MLModelService();
     private final Random random = new Random();
 
-    public ParamOptimizer(SimulationRangeConfig config) {
+    public CpuParamOptimizer(SimulationRangeConfig config) {
         this.config = config;
     }
 
+    @Override
     public MLModelService getMlService() {
         return mlService;
     }
@@ -30,15 +31,15 @@ public class ParamOptimizer {
     /**
      * Executes the full optimization lifecycle.
      */
+    @Override
     public SimulationParams optimize(List<StockGraphState> allStocks) {
-        logger.info("Starting Multi-Start Param Optimization Workflow...");
+        logger.info("Starting Multi-Start Param Optimization Workflow (CPU)...");
         SimulationDataPackage dataPkg = new SimulationDataPackage(allStocks);
 
         int M = 5;
         List<SimulationParams> centers = new ArrayList<>();
         centers.add(centerParamsFromConfig());
         for (int i = 1; i < M; i++) {
-            // Heavily randomize to spread across parameter space
             centers.add(randomize(centers.get(0), 1.0));
         }
 
@@ -57,7 +58,6 @@ public class ParamOptimizer {
         for (int gen = 1; gen <= 10 && radius >= 0.05; gen++) {
             logger.info("Generation {} (Radius: {})", gen, radius);
 
-            // Generate subset ONCE per generation for consistent noise across all centers
             List<Integer> subset = getShuffledIndices(dataPkg.stockCount).subList(0, Math.max(1, dataPkg.stockCount / 2));
 
             List<CompletableFuture<Void>> futures = new ArrayList<>();
@@ -108,10 +108,8 @@ public class ParamOptimizer {
             population.add(i == 0 ? center : randomize(center, radius));
         }
 
-        // STAGE 1: Broad discovery on the provided subset
         List<CandidateResult> discoveryResults = evaluateParallel(population, subset, pkg, rescue);
 
-        // STAGE 2: Deep validation of top candidates on 100% of stocks
         List<SimulationParams> elites = discoveryResults.stream()
                 .sorted(Comparator.comparingDouble(CandidateResult::score).reversed())
                 .limit(10)
@@ -136,6 +134,8 @@ public class ParamOptimizer {
                 int trades = stats.getKey();
                 int frames = stats.getValue();
 
+                if (trades == -1) return new CandidateResult(p, -100.0);
+
                 // Enforce minimum trade density requirements
                 boolean hasVolume = trades > Math.max(15, (stockSubset.size() * frames) / 25);
                 double score = rescue ? (-100.0 + trades) : (hasVolume ? sim.calculateScore(frames) : -100.0);
@@ -148,12 +148,22 @@ public class ParamOptimizer {
 
     private Pair<Integer, Integer> findTrades(Simulation sim, SimulationDataPackage pkg, List<Integer> stockSubset) {
         int evaluatedFrames = 0;
+        int stocksProcessed = 0;
+        int pruningCheckpoint = stockSubset.size() / 4;
+
         for (int start : config.startTimes) {
             for (int search : config.searchTimes) {
                 for (int select : config.selectTimes) {
                     evaluatedFrames++;
                     for (int sIdx : stockSubset) {
                         simulateStock(sim, pkg, sIdx, start, search, select, false);
+                        
+                        stocksProcessed++;
+                        if (stocksProcessed == pruningCheckpoint && pruningCheckpoint > 10) {
+                            if (sim.getTradeCount() == 0) {
+                                return new Pair<>(-1, evaluatedFrames);
+                            }
+                        }
                     }
                 }
             }

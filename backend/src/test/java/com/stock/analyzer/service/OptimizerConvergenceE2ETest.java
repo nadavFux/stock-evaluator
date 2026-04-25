@@ -83,7 +83,7 @@ public class OptimizerConvergenceE2ETest {
         config.pegWeight = new ArrayList<>(List.of(0.1));
         config.volatilityCompressionWeight = new ArrayList<>(List.of(0.1));
 
-        ParamOptimizer optimizer = new ParamOptimizer(config);
+        CpuParamOptimizer optimizer = new CpuParamOptimizer(config);
         SimulationParams optimizedParams = optimizer.optimize(stocks);
         
         assertNotNull(optimizedParams);

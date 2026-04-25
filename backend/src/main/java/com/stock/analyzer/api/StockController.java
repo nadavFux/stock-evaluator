@@ -11,7 +11,6 @@ import java.util.Map;
 
 @RestController
 @RequestMapping("/api/stocks")
-@CrossOrigin(origins = "*")
 public class StockController {
     private final GraphingService graphingService;
     private final StockDataService dataService;

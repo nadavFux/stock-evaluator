@@ -9,7 +9,6 @@ import java.util.stream.Collectors;
 
 @RestController
 @RequestMapping("/api/sectors")
-@CrossOrigin(origins = "*")
 public class SectorController {
     private final StockDataService dataService;
 

@@ -1,12 +1,52 @@
 import React, { useState, useEffect } from 'react';
 import { Save, X, RotateCcw, Plus, Layout, Sliders, Filter, Target, Globe, FileJson, Copy, Activity, CheckSquare, Square, Info, Calculator } from 'lucide-react';
 
+interface Config {
+    startTimes?: number[];
+    selectTimes?: number[];
+    searchTimes?: number[];
+    longMovingAvgTimes?: number[];
+    sellCutOffPerc?: number[];
+    lowerPriceToLongAvgBuyIn?: number[];
+    higherPriceToLongAvgBuyIn?: number[];
+    timeFrameForUpwardLongAvg?: number[];
+    timeFrameForOscillator?: number[];
+    maxPERatios?: number[];
+    aboveAvgRatingPricePerc?: number[];
+    timeFrameForUpwardShortPrice?: number[];
+    maxRSI?: number[];
+    minMarketCap?: number[];
+    maxMarketCap?: number[];
+    minRatesOfAvgInc?: number[];
+    minRatings?: number[];
+    maxRatings?: number[];
+    buyThreshold?: number[];
+    riskFreeRate?: number[];
+    movingAvgGapWeight?: number[];
+    reversionToMeanWeight?: number[];
+    ratingWeight?: number[];
+    upwardIncRateWeight?: number[];
+    rvolWeight?: number[];
+    pegWeight?: number[];
+    volatilityCompressionWeight?: number[];
+    sectors?: number[];
+    exchanges?: string[];
+    outputPath?: string;
+}
+
+interface Profile {
+    id: number;
+    name: string;
+    description: string;
+    configJson: string;
+}
+
 interface ConfigPanelProps {
-    config: any;
-    onSave: (config: any) => void;
+    config: Config;
+    onSave: (config: Config) => void;
     onClose: () => void;
-    profiles: any[];
-    onSavePreset: (name: string, description: string, config: any) => void;
+    profiles: Profile[];
+    onSavePreset: (name: string, description: string, config: Config) => void;
 }
 
 const RangeInput = ({ label, values, onChange, step = 1, min = 0 }: { label: string, values: number[], onChange: (newValues: number[]) => void, step?: number, min?: number }) => {
@@ -207,7 +247,7 @@ const GICS_INDUSTRIES = [
 const EXCHANGES = ["TASE", "NYSE", "NasdaqGS", "NasdaqGM", "NasdaqCM", "AMEX"];
 
 const ConfigPanel: React.FC<ConfigPanelProps> = ({ config, onSave, onClose, profiles, onSavePreset }) => {
-    const [localConfig, setCurrentLocalConfig] = useState<any>(JSON.parse(JSON.stringify(config)));
+    const [localConfig, setCurrentLocalConfig] = useState<Config>(JSON.parse(JSON.stringify(config)));
     const [activeTab, setActiveTab] = useState<'visual' | 'json'>('visual');
     const [activeCategory, setActiveTabCategory] = useState<'timing' | 'filters' | 'technicals' | 'sectors'>('timing');
     const [jsonText, setJsonText] = useState(JSON.stringify(config, null, 4));
@@ -225,13 +265,13 @@ const ConfigPanel: React.FC<ConfigPanelProps> = ({ config, onSave, onClose, prof
         try {
             const parsed = JSON.parse(val);
             setCurrentLocalConfig(parsed);
-        } catch (e) {
+        } catch {
             // Wait for valid JSON
         }
     };
 
-    const updateField = (key: string, value: any) => {
-        setCurrentLocalConfig((prev: any) => ({ ...prev, [key]: value }));
+    const updateField = (key: string, value: number[] | string | number) => {
+        setCurrentLocalConfig((prev: Config) => ({ ...prev, [key]: value }));
     };
 
     const handleSave = () => {
@@ -302,8 +342,9 @@ const ConfigPanel: React.FC<ConfigPanelProps> = ({ config, onSave, onClose, prof
             'upwardIncRateWeight', 'rvolWeight', 'pegWeight', 'volatilityCompressionWeight'
         ];
         fields.forEach(f => {
-            if (Array.isArray(localConfig[f]) && localConfig[f].length > 0) {
-                count *= localConfig[f].length;
+            const val = localConfig[f];
+            if (Array.isArray(val) && val.length > 0) {
+                count *= val.length;
             }
         });
         return count;
@@ -522,7 +563,7 @@ const ConfigPanel: React.FC<ConfigPanelProps> = ({ config, onSave, onClose, prof
                                             <label className="text-slate-400 text-xs font-bold uppercase tracking-widest mb-3 block">Output Path</label>
                                             <input 
                                                 type="text"
-                                                value={localConfig.outputPath}
+                                                value={localConfig.outputPath || ''}
                                                 onChange={(e) => updateField('outputPath', e.target.value)}
                                                 className="w-full bg-[#0f172a] border border-slate-700 rounded-xl px-4 py-3 text-blue-100 font-mono focus:border-blue-500 outline-none transition-all shadow-inner"
                                             />

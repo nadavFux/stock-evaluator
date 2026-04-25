@@ -6,7 +6,7 @@ import org.junit.jupiter.api.Test;
 import java.util.Arrays;
 import static org.junit.jupiter.api.Assertions.*;
 
-public class ParamOptimizerTest {
+public class CpuParamOptimizerTest {
 
     @Test
     public void testCandidateEvaluation() {
@@ -23,7 +23,7 @@ public class ParamOptimizerTest {
 
     @Test
     public void testRandomizeRespectsLogicalBounds() {
-        ParamOptimizer optimizer = new ParamOptimizer(new SimulationRangeConfig());
+        CpuParamOptimizer optimizer = new CpuParamOptimizer(new SimulationRangeConfig());
         SimulationParams center = createDefaultParams();
         
         for (int i = 0; i < 50; i++) {

@@ -1,6 +1,5 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { Client } from '@stomp/stompjs';
-import SockJS from 'sockjs-client';
 import { Play, Settings, Activity, List, TrendingUp, BarChart3, ChevronRight, Search, X, Download, Target, ChevronDown, RefreshCw } from 'lucide-react';
 import { BarChart, Bar, XAxis, Tooltip, ResponsiveContainer, Cell } from 'recharts';
 import StockChart from './StockChart';
@@ -9,7 +8,7 @@ import SectorHeatmap from './SectorHeatmap';
 
 interface AnalysisUpdate {
     type: 'STATUS' | 'PROGRESS' | 'RESULTS' | 'ERROR' | 'ML_FEATURES' | 'BACKTEST_REPORT';
-    payload: any;
+    payload: string | AnalysisResult[] | BacktestReport | FeatureImportance[];
     timestamp: number;
 }
 
@@ -20,26 +19,117 @@ interface Profile {
     configJson: string;
 }
 
+interface FeatureImportance {
+    name: string;
+    val: number;
+}
+
+interface Stock {
+    ticker_symbol: string;
+    name: string;
+}
+
+interface StockGraphState {
+    stock: Stock;
+    dates: string[];
+    closePrices: number[];
+    volumes?: number[];
+    avgs?: (number | null)[];
+    rating?: number[];
+}
+
+interface TradePoint {
+    date: string;
+    type: 'BUY' | 'SELL';
+    price: number;
+}
+
+interface AnalysisResult {
+    stock: StockGraphState;
+    result: {
+        heuristicScore: number;
+        aiPredictedReturn: number;
+        q05: number;
+        q50: number;
+        q95: number;
+        rvol?: number;
+        volatility?: number;
+        momentum?: number;
+    };
+    tradePoints: TradePoint[];
+}
+
+interface BacktestTrade {
+    buyDate: string;
+    ticker: string;
+    days: number;
+    lastGained: number;
+}
+
+interface BacktestReport {
+    totalTrades: number;
+    totalGain: string;
+    avgGain: string;
+    trades: BacktestTrade[];
+}
+
+interface Config {
+    startTimes: number[];
+    selectTimes: number[];
+    searchTimes: number[];
+    longMovingAvgTimes: number[];
+    sellCutOffPerc: number[];
+    lowerPriceToLongAvgBuyIn: number[];
+    higherPriceToLongAvgBuyIn: number[];
+    timeFrameForUpwardLongAvg: number[];
+    timeFrameForOscillator: number[];
+    maxPERatios: number[];
+    aboveAvgRatingPricePerc: number[];
+    timeFrameForUpwardShortPrice: number[];
+    maxRSI: number[];
+    minMarketCap: number[];
+    maxMarketCap: number[];
+    minRatesOfAvgInc: number[];
+    minRatings: number[];
+    maxRatings: number[];
+    buyThreshold: number[];
+    riskFreeRate: number[];
+    movingAvgGapWeight: number[];
+    reversionToMeanWeight: number[];
+    ratingWeight: number[];
+    upwardIncRateWeight: number[];
+    rvolWeight: number[];
+    pegWeight: number[];
+    volatilityCompressionWeight: number[];
+    sectors: number[];
+    exchanges: string[];
+    outputPath: string;
+}
+
 const StockDashboard: React.FC = () => {
     const [status, setStatus] = useState<string>('Idle');
     const [progress, setProgress] = useState<string>('');
     const [percent, setPercent] = useState<number>(0);
     const [logs, setLogs] = useState<string[]>([]);
-    const [results, setResults] = useState<any[]>([]);
-    const [backtestReport, setBacktestReport] = useState<any>(null);
-    const [featureImportance, setFeatureImportance] = useState<any[]>([]);
+    const [results, setResults] = useState<AnalysisResult[]>([]);
+    const [backtestReport, setBacktestReport] = useState<BacktestReport | null>(null);
+    const [featureImportance, setFeatureImportance] = useState<FeatureImportance[]>([]);
     const [isRunning, setIsRunning] = useState(false);
-    const [selectedStock, setSelectedStock] = useState<any>(null);
+    const [selectedStock, setSelectedStock] = useState<AnalysisResult | null>(null);
     const [comparisonTickers, setComparisonTickers] = useState<string[]>([]);
-    const [comparisonData, setComparisonData] = useState<any[]>([]);
+    const [comparisonData, setComparisonData] = useState<StockGraphState[]>([]);
     const [compSearch, setCompSearch] = useState('');
     const [showConfig, setShowConfig] = useState(false);
     const [searchTerm, setSearchTerm] = useState('');
     const [profiles, setProfiles] = useState<Profile[]>([]);
-    const [currentConfig, setCurrentConfig] = useState<any>(() => {
+    const [currentConfig, setCurrentConfig] = useState<Config>(() => {
         const saved = localStorage.getItem('stockAnalyzerConfig');
         if (saved) {
-            try { return JSON.parse(saved); } catch (e) {}
+            try { 
+                return JSON.parse(saved) as Config; 
+            } catch {
+                // Ignore parse errors
+            }
         }
         return {
             startTimes: [50, 110, 200],
@@ -76,23 +166,69 @@ const StockDashboard: React.FC = () => {
     });
     const stompClient = useRef<Client | null>(null);
 
+    const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8080';
+
+    const fetchProfiles = useCallback(async () => {
+        try {
+            const res = await fetch(`${API_BASE_URL}/api/profiles`, {
+                headers: { 'Bypass-Tunnel-Reminder': 'true' }
+            });
+            if (!res.ok) throw new Error('Backend failed to return profiles');
+            const data = await res.json() as Profile[];
+            setProfiles(data);
+        } catch (error) {
+            console.error('Failed to fetch profiles', error);
+        }
+    }, [API_BASE_URL]);
+
+    const handleUpdate = useCallback((update: AnalysisUpdate) => {
+        const time = new Date(update.timestamp).toLocaleTimeString();
+        switch (update.type) {
+            case 'STATUS':
+                setStatus(update.payload as string);
+                setLogs(prev => [`[${time}] ${update.payload}`, ...prev]);
+                break;
+            case 'PROGRESS': {
+                setProgress(update.payload as string);
+                const match = (update.payload as string).match(/(\d+)%/);
+                if (match) setPercent(parseInt(match[1]));
+                break;
+            }
+            case 'ML_FEATURES':
+                setFeatureImportance(update.payload as FeatureImportance[]);
+                break;
+            case 'BACKTEST_REPORT':
+                setBacktestReport(update.payload as BacktestReport);
+                setIsRunning(false);
+                setPercent(100);
+                break;
+            case 'RESULTS':
+                setResults(update.payload as AnalysisResult[]);
+                setIsRunning(false);
+                setPercent(100);
+                break;
+            case 'ERROR':
+                setLogs(prev => [`[${time}] ERROR: ${update.payload}`, ...prev]);
+                setIsRunning(false);
+                break;
+        }
+    }, []);
+
     useEffect(() => {
         localStorage.setItem('stockAnalyzerConfig', JSON.stringify(currentConfig));
     }, [currentConfig]);
 
-    const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8080';
-
     useEffect(() => {
-        const wsUrl = `${API_BASE_URL}/ws-stock`;
-        console.log(`[WebSocket] Attempting connection to: ${wsUrl}`);
+        // Convert http/https to ws/wss for native WebSocket support
+        // Append '/websocket' because the backend is configured with .withSockJS()
+        const socketUrl = API_BASE_URL.replace('http', 'ws') + '/ws-stock/websocket';
+        console.log(`[WebSocket] Connecting via native WebSocket to: ${socketUrl}`);
 
         const client = new Client({
-            webSocketFactory: () => new SockJS(wsUrl, null, {
-                transports: ['websocket'], // Force WebSocket to bypass problematic /info CORS check
-                sessionId: 10,
-                // Add this to help bypass localtunnel reminder if supported by your version
-                headers: { 'bypass-tunnel-reminder': 'true' }
-            }),
+            brokerURL: socketUrl,
+            reconnectDelay: 5000,
+            heartbeatIncoming: 4000,
+            heartbeatOutgoing: 4000,
             onConnect: () => {
                 console.log('[WebSocket] Connected successfully');
                 client.subscribe('/topic/updates', (message) => {
@@ -105,64 +241,22 @@ const StockDashboard: React.FC = () => {
                 setLogs(prev => [`[SYSTEM] WebSocket STOMP Error: ${frame.headers['message']}`, ...prev]);
             },
             onWebSocketError: (event) => {
-                console.error('[WebSocket] Transport Error:', event);
+                console.error('[WebSocket] Connection Error:', event);
                 setLogs(prev => [`[SYSTEM] WebSocket Connection Failed. Check tunnel bypass page.`, ...prev]);
             }
         });
 
         client.activate();
         stompClient.current = client;
-        
+
         fetchProfiles();
-        
+
         return () => {
             client.deactivate();
         };
-    }, []);
+    }, [API_BASE_URL, fetchProfiles, handleUpdate]);
 
-    const fetchProfiles = async () => {
-        try {
-            const res = await fetch(`${API_BASE_URL}/api/profiles`);
-            const data = await res.json();
-            setProfiles(data);
-        } catch (error) {
-            console.error('Failed to fetch profiles', error);
-        }
-    };
-
-    const handleUpdate = (update: AnalysisUpdate) => {
-        const time = new Date(update.timestamp).toLocaleTimeString();
-        switch (update.type) {
-            case 'STATUS':
-                setStatus(update.payload);
-                setLogs(prev => [`[${time}] ${update.payload}`, ...prev]);
-                break;
-            case 'PROGRESS':
-                setProgress(update.payload);
-                const match = update.payload.match(/(\d+)%/);
-                if (match) setPercent(parseInt(match[1]));
-                break;
-            case 'ML_FEATURES':
-                setFeatureImportance(update.payload);
-                break;
-            case 'BACKTEST_REPORT':
-                setBacktestReport(update.payload);
-                setIsRunning(false);
-                setPercent(100);
-                break;
-            case 'RESULTS':
-                setResults(update.payload);
-                setIsRunning(false);
-                setPercent(100);
-                break;
-            case 'ERROR':
-                setLogs(prev => [`[${time}] ERROR: ${update.payload}`, ...prev]);
-                setIsRunning(false);
-                break;
-        }
-    };
-
-    const runBacktest = async (configToUse: any) => {
+    const runBacktest = async (configToUse: Config) => {
         setIsRunning(true);
         setBacktestReport(null);
         setLogs([]);
@@ -170,25 +264,31 @@ const StockDashboard: React.FC = () => {
         try {
             await fetch(`${API_BASE_URL}/api/analysis/backtest`, {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
+                headers: { 
+                    'Content-Type': 'application/json',
+                    'Bypass-Tunnel-Reminder': 'true'
+                },
                 body: JSON.stringify(configToUse)
             });
-        } catch (error) {
+        } catch {
             setIsRunning(false);
         }
     };
 
-    const runOpportunities = async (configToUse: any) => {
+    const runOpportunities = async (configToUse: Config) => {
         setIsRunning(true);
         setLogs([]);
         setPercent(0);
         try {
             await fetch(`${API_BASE_URL}/api/analysis/opportunities`, {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
+                headers: { 
+                    'Content-Type': 'application/json',
+                    'Bypass-Tunnel-Reminder': 'true'
+                },
                 body: JSON.stringify(configToUse)
             });
-        } catch (error) {
+        } catch {
             setIsRunning(false);
         }
     };
@@ -202,31 +302,36 @@ const StockDashboard: React.FC = () => {
         try {
             const response = await fetch(`${API_BASE_URL}/api/analysis/run`, {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
+                headers: { 
+                    'Content-Type': 'application/json',
+                    'Bypass-Tunnel-Reminder': 'true'
+                },
                 body: JSON.stringify(currentConfig)
             });
             if (!response.ok) {
-                const errorData = await response.json();
+                const errorData = await response.json() as { message?: string };
                 setLogs(prev => [`[${new Date().toLocaleTimeString()}] ERROR: ${errorData.message || 'Validation failed'}`, ...prev]);
                 setIsRunning(false);
             }
-        } catch (error) {
+        } catch {
             setIsRunning(false);
         }
     };
 
     const selectProfile = (profile: Profile) => {
         try {
-            setCurrentConfig(JSON.parse(profile.configJson));
-        } catch (e) {
+            setCurrentConfig(JSON.parse(profile.configJson) as Config);
+        } catch {
             console.error('Failed to parse profile config');
         }
     };
 
     const exportParams = async () => {
         try {
-            const res = await fetch(`${API_BASE_URL}/api/analysis/export-params`);
-            const data = await res.json();
+            const res = await fetch(`${API_BASE_URL}/api/analysis/export-params`, {
+                headers: { 'Bypass-Tunnel-Reminder': 'true' }
+            });
+            const data = await res.json() as { content?: string, error?: string };
             if (data.content) {
                 const blob = new Blob([data.content], { type: 'text/yaml' });
                 const url = window.URL.createObjectURL(blob);
@@ -242,18 +347,21 @@ const StockDashboard: React.FC = () => {
         }
     };
 
-    const savePreset = async (name: string, description: string, config: any) => {
+    const savePreset = async (name: string, description: string, config: Config) => {
         try {
             await fetch(`${API_BASE_URL}/api/profiles`, {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
+                headers: { 
+                    'Content-Type': 'application/json',
+                    'Bypass-Tunnel-Reminder': 'true'
+                },
                 body: JSON.stringify({
                     name,
                     description,
                     configJson: JSON.stringify(config)
                 })
             });
-            fetchProfiles();
+            void fetchProfiles();
         } catch (error) {
             console.error('Failed to save preset', error);
         }
@@ -262,7 +370,10 @@ const StockDashboard: React.FC = () => {
     const addComparison = async (ticker: string) => {
         if (!ticker || comparisonTickers.includes(ticker.toUpperCase())) return;
         try {
-            const res = await fetch(`${API_BASE_URL}/api/stocks/${ticker.toUpperCase()}/graph`);
+            const res = await fetch(`${API_BASE_URL}/api/stocks/${ticker.toUpperCase()}/graph`, {
+                headers: { 'Bypass-Tunnel-Reminder': 'true' }
+            });
+
             const data = await res.json();
             if (data) {
                 setComparisonData(prev => [...prev, data]);
@@ -428,7 +539,7 @@ const StockDashboard: React.FC = () => {
                                     </tr>
                                 </thead>
                                 <tbody className="divide-y divide-slate-800/50 font-mono">
-                                    {backtestReport.trades.map((t: any, i: number) => (
+                                    {backtestReport.trades.map((t: BacktestTrade, i: number) => (
                                         <tr key={i} className="hover:bg-white/5">
                                             <td className="px-6 py-3 text-slate-400">{t.buyDate}</td>
                                             <td className="px-6 py-3 text-white font-bold">{t.ticker}</td>
@@ -552,7 +663,7 @@ const StockDashboard: React.FC = () => {
                                 </tr>
                             </thead>
                             <tbody className="divide-y divide-slate-800/50">
-                                {filteredResults.map((res, i) => (
+                                {filteredResults.map((res: AnalysisResult, i: number) => (
                                     <tr 
                                         key={i} 
                                         onClick={() => setSelectedStock(res)}
