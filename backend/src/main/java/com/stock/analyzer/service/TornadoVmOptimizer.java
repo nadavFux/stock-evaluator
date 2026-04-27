@@ -32,6 +32,7 @@ public class TornadoVmOptimizer implements Optimizer {
             }
         } catch (Throwable t) {
             logger.error("TornadoVM initialization failed: {}", t.getMessage());
+            t.printStackTrace(); // Print full trace to Colab console
         }
     }
 
