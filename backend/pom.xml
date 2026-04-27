@@ -200,7 +200,7 @@
                 <artifactId>maven-surefire-plugin</artifactId>
                 <version>3.5.2</version>
                 <configuration>
-                    <argLine>@C:\Users\NF\tornadovm-4.0.0-opencl\tornado-argfile --enable-preview --enable-native-access=ALL-UNNAMED -Dtornado.sdk.root=C:\Users\NF\tornadovm-4.0.0-opencl -Djava.library.path=C:\Users\NF\tornadovm-4.0.0-opencl\lib</argLine>
+                    <argLine>@C:\Users\NF\tornadovm-4.0.0-opencl\tornado-argfile --enable-preview --enable-native-access=ALL-UNNAMED -Dtornado.sdk.root=C:\Users\NF\tornadovm-4.0.0-opencl -Djava.library.path=C:\Users\NF\tornadovm-4.0.0-opencl\lib -Dtornado.print.kernel=true</argLine>
                 </configuration>
             </plugin>
 
