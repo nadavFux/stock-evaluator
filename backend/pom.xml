@@ -17,6 +17,7 @@
     <properties>
         <java.version>21</java.version>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+        <tornado.root>C:\Users\NF\tornadovm-4.0.0-opencl</tornado.root>
     </properties>
 
 
@@ -200,7 +201,7 @@
                 <artifactId>maven-surefire-plugin</artifactId>
                 <version>3.5.2</version>
                 <configuration>
-                    <argLine>@C:\Users\NF\tornadovm-4.0.0-opencl\tornado-argfile --enable-preview --enable-native-access=ALL-UNNAMED -Dtornado.sdk.root=C:\Users\NF\tornadovm-4.0.0-opencl -Djava.library.path=C:\Users\NF\tornadovm-4.0.0-opencl\lib -Dtornado.print.kernel=true</argLine>
+                    <argLine>@${tornado.root}/tornado-argfile --enable-preview --enable-native-access=ALL-UNNAMED -Dtornado.sdk.root=${tornado.root} -Djava.library.path=${tornado.root}/lib -Dtornado.print.kernel=true</argLine>
                 </configuration>
             </plugin>
 
@@ -209,7 +210,7 @@
                 <artifactId>spring-boot-maven-plugin</artifactId>
                 <configuration>
                     <jvmArguments>
-                        @C:\Users\NF\tornadovm-4.0.0-opencl\tornado-argfile --enable-preview --enable-native-access=ALL-UNNAMED -Dtornado.sdk.root=C:\Users\NF\tornadovm-4.0.0-opencl -Djava.library.path=C:\Users\NF\tornadovm-4.0.0-opencl\lib
+                        @${tornado.root}/tornado-argfile --enable-preview --enable-native-access=ALL-UNNAMED -Dtornado.sdk.root=${tornado.root} -Djava.library.path=${tornado.root}/lib
                     </jvmArguments>
                 </configuration>
             </plugin>
@@ -221,18 +222,18 @@
                 <configuration>
                     <mainClass>com.stock.analyzer.App</mainClass>
                     <arguments>
-                        <argument>@C:\Users\NF\tornadovm-4.0.0-opencl\tornado-argfile</argument>
+                        <argument>@${tornado.root}/tornado-argfile</argument>
                         <argument>--enable-preview</argument>
                         <argument>--enable-native-access=ALL-UNNAMED</argument>
                     </arguments>
                     <systemProperties>
                         <systemProperty>
                             <key>tornado.sdk.root</key>
-                            <value>C:\Users\NF\tornadovm-4.0.0-opencl</value>
+                            <value>${tornado.root}</value>
                         </systemProperty>
                         <systemProperty>
                             <key>java.library.path</key>
-                            <value>C:\Users\NF\tornadovm-4.0.0-opencl\lib</value>
+                            <value>${tornado.root}/lib</value>
                         </systemProperty>
                     </systemProperties>
                 </configuration>
