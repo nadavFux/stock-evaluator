@@ -21,9 +21,7 @@ public class GlobalCorsConfig {
         
         // Explicitly include localhost and the origin pattern
         config.setAllowedOriginPatterns(Arrays.asList(
-            "http://localhost:[*]",
-            "http://127.0.0.1:[*]",
-            "https://*.loca.lt"
+            "*"
         ));
         
         config.setAllowedMethods(Arrays.asList("GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"));
