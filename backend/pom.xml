@@ -17,8 +17,8 @@
     <properties>
         <java.version>21</java.version>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
-        <tornado.root>C:\Users\NF\tornadovm-4.0.0-opencl</tornado.root>
-        <tornado.argfile>${tornado.root}\tornado-argfile</tornado.argfile>
+        <tornado.root>C:/Users/NF/tornadovm-4.0.0-opencl</tornado.root>
+        <tornado.argfile>${tornado.root}/tornado-argfile</tornado.argfile>
     </properties>
 
 
@@ -158,6 +158,11 @@
         <dependency>
             <groupId>io.github.beehive-lab</groupId>
             <artifactId>tornado-runtime</artifactId>
+            <version>4.0.0</version>
+        </dependency>
+        <dependency>
+            <groupId>io.github.beehive-lab</groupId>
+            <artifactId>tornado-opencl</artifactId>
             <version>4.0.0</version>
         </dependency>
     </dependencies>
