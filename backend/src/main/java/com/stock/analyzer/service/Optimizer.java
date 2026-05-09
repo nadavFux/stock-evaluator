@@ -12,5 +12,5 @@ public interface Optimizer {
     SimulationParams optimize(List<StockGraphState> allStocks);
     MLModelService getMlService();
 
-    record CandidateResult(SimulationParams params, double score) {}
+    record CandidateResult(SimulationParams params, double score, double yearlyGain) {}
 }

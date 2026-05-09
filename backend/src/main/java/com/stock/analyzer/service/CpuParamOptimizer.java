@@ -84,7 +84,9 @@ public class CpuParamOptimizer implements Optimizer {
                         }
                         bestScores.set(centerIdx, result.score());
                         centers.set(centerIdx, result.params());
-                        logger.info("Center {} New Best Score: {}", centerIdx, result.score());
+                        logger.info("Center {} Improved: {} | Yearly Gain: %.2f%% (vs RF: %.2f%%)".formatted(
+                                centerIdx, result.score(), result.yearlyGain(), 
+                                result.params().riskFreeRate() * 100.0));
                     }
                 }));
             }
@@ -127,7 +129,7 @@ public class CpuParamOptimizer implements Optimizer {
 
         return validationResults.stream()
                 .max(Comparator.comparingDouble(CandidateResult::score))
-                .orElse(new CandidateResult(center, bestScore));
+                .orElse(new CandidateResult(center, bestScore, 0.0));
     }
 
     List<CandidateResult> evaluateParallel(List<SimulationParams> candidates, List<Integer> stockSubset, SimulationDataPackage pkg, boolean rescue) {
@@ -140,13 +142,17 @@ public class CpuParamOptimizer implements Optimizer {
                 int trades = stats.getKey();
                 int frames = stats.getValue();
 
-                if (trades == -1) return new CandidateResult(p, -100.0);
+                if (trades == -1) return new CandidateResult(p, -100.0, 0.0);
+
+                // Total evaluation instances: stocks * grid points
+                long totalEvaluations = (long) stockSubset.size() * frames;
 
                 // Enforce minimum trade density requirements
-                boolean hasVolume = trades > Math.max(15, (stockSubset.size() * frames) / 25);
-                double score = rescue ? (-100.0 + trades) : (hasVolume ? sim.calculateScore(frames) : -100.0);
+                boolean hasVolume = trades > Math.max(15, totalEvaluations / 25);
+                double score = rescue ? (-100.0 + trades) : (hasVolume ? sim.calculateScore(totalEvaluations) : -100.0);
+                double yearlyGain = sim.getYearlyGain();
 
-                return new CandidateResult(p, score);
+                return new CandidateResult(p, score, yearlyGain);
             }));
         }
         return futures.stream().map(CompletableFuture::join).toList();
@@ -162,7 +168,7 @@ public class CpuParamOptimizer implements Optimizer {
                 for (int select : config.selectTimes) {
                     evaluatedFrames++;
                     for (int sIdx : stockSubset) {
-                        simulateStock(sim, pkg, sIdx, start, search, select, false);
+                        simulateStock(sim, pkg, sIdx, start, search, select, false, null);
                         
                         stocksProcessed++;
                         if (stocksProcessed == pruningCheckpoint && pruningCheckpoint > 10) {
@@ -181,21 +187,24 @@ public class CpuParamOptimizer implements Optimizer {
         Simulation sim = new Simulation(params);
         if (sim.params == null) return -100.0;
 
+        Set<String> collectedPoints = collectML ? new HashSet<>() : null;
         int frames = 0;
         for (int start : config.startTimes) {
             for (int search : config.searchTimes) {
                 for (int select : config.selectTimes) {
                     frames++;
                     for (int sIdx = 0; sIdx < pkg.stockCount; sIdx++) {
-                        simulateStock(sim, pkg, sIdx, start, search, select, collectML);
+                        simulateStock(sim, pkg, sIdx, start, search, select, collectML, collectedPoints);
                     }
                 }
             }
         }
-        return sim.getTradeCount() > pkg.stockCount / 100 ? sim.calculateScore(frames) : -100.0;
+        long totalEvaluations = (long) pkg.stockCount * frames;
+        double score = sim.getTradeCount() > pkg.stockCount / 100 ? sim.calculateScore(totalEvaluations) : -100.0;
+        return score;
     }
 
-    private void simulateStock(Simulation sim, SimulationDataPackage pkg, int sIdx, int daysBack, int searchTime, int selectTime, boolean ml) {
+    private void simulateStock(Simulation sim, SimulationDataPackage pkg, int sIdx, int daysBack, int searchTime, int selectTime, boolean ml, Set<String> collectedPoints) {
         int timeStart = Math.max(0, pkg.daysCount - daysBack);
         int searchLimit = Math.min(timeStart + searchTime, pkg.daysCount);
         int absoluteLimit = (selectTime > 0) ? Math.min(timeStart + searchTime + selectTime, pkg.daysCount) : pkg.daysCount;
@@ -205,7 +214,11 @@ public class CpuParamOptimizer implements Optimizer {
                 double buyPrice = pkg.closePrices[sIdx][i];
 
                 if (ml && i >= pkg.offsets[sIdx] + 30 && i + 30 < pkg.daysCount) {
-                    collectMLSample(sim, pkg, sIdx, i, buyPrice);
+                    String pointKey = sIdx + ":" + i;
+                    if (!collectedPoints.contains(pointKey)) {
+                        collectMLSample(sim, pkg, sIdx, i, buyPrice);
+                        collectedPoints.add(pointKey);
+                    }
                 }
 
                 // Hold period simulation

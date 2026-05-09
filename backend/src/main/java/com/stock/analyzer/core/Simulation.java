@@ -25,6 +25,7 @@ public class Simulation {
     private double[] gains = new double[1024];
     private int[] holdDays = new int[1024];
     private int tradeCount = 0;
+    private double yearlyGain = 0;
 
     // Pre-allocated sequence buffer for AI inference to eliminate GC pressure
     private final float[][] sequenceBuffer = new float[30][12];
@@ -67,6 +68,10 @@ public class Simulation {
 
     public int getTradeCount() {
         return tradeCount;
+    }
+
+    public double getYearlyGain() {
+        return yearlyGain;
     }
 
     /**
@@ -192,8 +197,9 @@ public class Simulation {
 
     /**
      * Calculates the final risk-adjusted score using trade density and duration multipliers.
+     * @param totalEvaluations Total number of stock-frame simulations performed (stocks * gridCount).
      */
-    public double calculateScore(int totalFrames) {
+    public double calculateScore(long totalEvaluations) {
         if (tradeCount < 2) return -100.0;
 
         double dailyRiskFreeRate = Math.pow(1 + params.riskFreeRate(), 1.0 / 252) - 1;
@@ -212,6 +218,9 @@ public class Simulation {
         for (double r : dailyExcessReturns) sum += r;
         double avgDailyExcess = sum / tradeCount;
 
+        // Store yearly gain for logging: (Avg Daily Excess + Daily RF) * 252
+        this.yearlyGain = (avgDailyExcess + (dailyRiskFreeRate * 100)) * 252;
+
         double varianceSum = 0.0;
         for (double r : dailyExcessReturns) varianceSum += Math.pow(r - avgDailyExcess, 2);
         double stdDevDaily = Math.sqrt(varianceSum / (tradeCount - 1));
@@ -219,14 +228,15 @@ public class Simulation {
 
         // Multipliers for statistical reliability
         double absoluteFactor = Math.min(1.0, (double) tradeCount / 40.0);
-        double densityFactor = Math.min(1.0, ((double) tradeCount / Math.max(1, totalFrames)) / 10.0);
+        // Density factor relative to total simulation runs. Target: 10% density.
+        double densityFactor = Math.min(1.0, ((double) tradeCount / Math.max(1.0, totalEvaluations)) / 0.1);
         double volumeMultiplier = Math.sqrt(absoluteFactor * densityFactor);
         double durationMultiplier = Math.min(1.0, ((double) totalTradeDays / tradeCount) / 5.0);
 
         return sharpe * volumeMultiplier * durationMultiplier * 10.0;
     }
 
-    public String getPerformanceReport(int totalFrames) {
+    public String getPerformanceReport(long totalEvaluations) {
         if (tradeCount == 0) return "No trades executed.";
         double totalGains = 0;
         long totalDays = 0;
@@ -235,7 +245,7 @@ public class Simulation {
             totalDays += holdDays[i];
         }
         return String.format("Score: %.2f | Avg Gain: %.2f%% | Trades: %d | Avg Hold: %.1f days",
-                calculateScore(totalFrames), 
+                calculateScore(totalEvaluations), 
                 (totalGains / tradeCount) * 100,
                 tradeCount, (double) totalDays / tradeCount);
     }
