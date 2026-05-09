@@ -31,7 +31,7 @@ public class TornadoVmOptimizer implements Optimizer {
     // Buffer Strides and Layout Constants
     private static final int TECH_DATA_STRIDE = 12;
     private static final int PARAMETER_STRIDE = 24;
-    private static final int OPTIMIZATION_RESULT_STRIDE = 4;
+    private static final int OPTIMIZATION_RESULT_STRIDE = 5;
     private static final int GRID_TASK_STRIDE = 3;
 
     // Simulation Constants
@@ -184,7 +184,7 @@ public class TornadoVmOptimizer implements Optimizer {
             }
 
             try {
-                String planId = "unified_s" + subsetSize + "_g" + gridCount;
+                String planId = "unified_s" + subsetSize + "_g" + gridCount + "_b" + currentBatchSize;
                 TornadoExecutionPlan plan = planCache.get(planId);
                 if (plan == null) {
                     TaskGraph graph = new TaskGraph(planId)
@@ -200,7 +200,7 @@ public class TornadoVmOptimizer implements Optimizer {
                 plan.execute();
 
                 for (int candidateInBatchIdx = 0; candidateInBatchIdx < currentBatchSize; candidateInBatchIdx++) {
-                    double totalTrades = 0, totalDaysHolding = 0, totalExcessReturn = 0, totalSqExcessReturn = 0;
+                    double totalTrades = 0, totalDaysHolding = 0, totalExcessReturn = 0, totalSqExcessReturn = 0, totalProfitAccum = 0;
                     for (int sIdx = 0; sIdx < subsetSize; sIdx++) {
                         for (int gIdx = 0; gIdx < gridCount; gIdx++) {
                             int offset = (candidateInBatchIdx * subsetSize * gridCount + sIdx * gridCount + gIdx) * OPTIMIZATION_RESULT_STRIDE;
@@ -208,12 +208,15 @@ public class TornadoVmOptimizer implements Optimizer {
                             totalDaysHolding += optimizationResults.get(offset + 1);
                             totalExcessReturn += optimizationResults.get(offset + 2);
                             totalSqExcessReturn += optimizationResults.get(offset + 3);
+                            totalProfitAccum += optimizationResults.get(offset + 4);
                         }
                     }
 
-                    double avgExcess = totalTrades > 0 ? totalExcessReturn / totalTrades : 0;
+                    // Duration-Weighted Yield: Sum(Total Profit) / Sum(Holding Days).
+                    // This provides the average daily return while invested, correctly weighting long trades over short spikes.
+                    double avgExcessYield = totalDaysHolding > 0 ? totalProfitAccum / totalDaysHolding : 0;
                     double riskFreeRateYearly = candidates.get(start + candidateInBatchIdx).riskFreeRate() * 100.0;
-                    double yearlyGain = (avgExcess + (riskFreeRateYearly / 252.0)) * 252.0;
+                    double yearlyGain = (avgExcessYield + (riskFreeRateYearly / 252.0)) * 252.0;
 
                     double score = calculateCandidateScore(candidates.get(start + candidateInBatchIdx),
                             totalTrades, totalDaysHolding, totalExcessReturn, totalSqExcessReturn,
@@ -304,7 +307,7 @@ public class TornadoVmOptimizer implements Optimizer {
             int buyLimit = (simStart + searchTimeframe < totalDays) ? simStart + searchTimeframe : totalDays;
             int finalLimit = (selectionTimeframe > 0) ? ((simStart + searchTimeframe + selectionTimeframe < totalDays) ? simStart + searchTimeframe + selectionTimeframe : totalDays) : totalDays;
 
-            float trades = 0, holdingDays = 0, sumExcess = 0, sumSqExcess = 0;
+            float trades = 0, holdingDays = 0, sumExcess = 0, sumSqExcess = 0, sumTotalProfit = 0;
             int tradingState = 0; // 0: Searching, 1: Holding
             float entryPrice = 0.0f, entryDay = 0.0f;
 
@@ -313,12 +316,18 @@ public class TornadoVmOptimizer implements Optimizer {
 
                 int dayOffset = (globalStockIdx * totalDays + d) * TECH_DATA_STRIDE;
                 float price = technicalData.get(dayOffset);
-                if (price <= 0) continue;
+                
+                // Penny stock and data garbage filter
+                if (price < 0.05f) continue;
 
                 // 1. Calculate Integrated Heuristic
                 int maStart = (d - longAvgTimeframe + 1 > stockStartOffset) ? d - longAvgTimeframe + 1 : stockStartOffset;
                 float maDivisor = (float) (d - maStart + 1);
                 float movingAvg = (technicalData.get(dayOffset + 1) - (maStart > stockStartOffset ? technicalData.get((globalStockIdx * totalDays + (maStart - 1)) * TECH_DATA_STRIDE + 1) : 0.0f)) / (maDivisor > 0 ? maDivisor : 1.0f);
+                
+                // Robustness: ensure movingAvg is sane
+                if (movingAvg < 0.01f) movingAvg = price;
+                
                 float gap = price / (movingAvg + (float) EPSILON);
 
                 // Gap Score
@@ -370,7 +379,7 @@ public class TornadoVmOptimizer implements Optimizer {
                 float scoreVol = (1.0f - TornadoMath.clamp(blendedVol / 0.05f, 0, 1)) * (weightVolatility / totalWeight);
 
                 float marketCap = technicalData.get(dayOffset + 8);
-                float mcFilter = (marketCap <= 0 || (marketCap >= minMarketCap && marketCap <= maxMarketCap)) ? 1.0f : 0.0f;
+                float mcFilter = (marketCap > 0 && marketCap >= minMarketCap && marketCap <= maxMarketCap) ? 1.0f : (minMarketCap <= 0 ? 1.0f : 0.0f);
                 float rsiFilter = (technicalData.get(dayOffset + 7) <= maxRSI) ? 1.0f : 0.0f;
 
                 float heuristic = (scoreGap + scoreRating + scoreRVol + scoreMom + scoreRev + scorePeg + scoreVol) * mcFilter * rsiFilter;
@@ -386,13 +395,20 @@ public class TornadoVmOptimizer implements Optimizer {
                 } else if (triggerSell == 1) {
                     float duration = (float) d - entryDay;
                     if (duration > 0) {
-                        float rawGain = (price - entryPrice) / (entryPrice + (float) EPSILON) * 100.0f;
-                        float excessReturn = (rawGain - (dailyRiskFreeRate * duration * 100.0f)) / duration;
+                        float rawGain = (price - entryPrice) / (entryPrice + 0.01f) * 100.0f;
+                        
+                        // Outlier protection: cap gain at 10,000%
+                        if (rawGain > 10000.0f) rawGain = 10000.0f;
+                        if (rawGain < -100.0f) rawGain = -100.0f;
+
+                        float excessReturnDaily = (rawGain - (dailyRiskFreeRate * duration * 100.0f)) / duration;
+                        float excessReturnTotal = rawGain - (dailyRiskFreeRate * duration * 100.0f);
 
                         trades += 1.0f;
                         holdingDays += duration;
-                        sumExcess += excessReturn;
-                        sumSqExcess += excessReturn * excessReturn;
+                        sumExcess += excessReturnDaily;
+                        sumSqExcess += excessReturnDaily * excessReturnDaily;
+                        sumTotalProfit += excessReturnTotal;
                     }
                     tradingState = 0;
                 }
@@ -403,6 +419,7 @@ public class TornadoVmOptimizer implements Optimizer {
             optimizationResults.set(outputIdx + 1, holdingDays);
             optimizationResults.set(outputIdx + 2, sumExcess);
             optimizationResults.set(outputIdx + 3, sumSqExcess);
+            optimizationResults.set(outputIdx + 4, sumTotalProfit);
         }
     }
 
