@@ -16,11 +16,17 @@ import java.util.concurrent.CompletableFuture;
 public class CpuParamOptimizer implements Optimizer {
     private static final Logger logger = LoggerFactory.getLogger(CpuParamOptimizer.class);
     private final SimulationRangeConfig config;
-    private final MLModelService mlService = new MLModelService();
+    private final MLModelService mlService;
     private final Random random = new Random();
 
     public CpuParamOptimizer(SimulationRangeConfig config) {
         this.config = config;
+        this.mlService = new MLModelService();
+    }
+
+    public CpuParamOptimizer(SimulationRangeConfig config, MLModelService sharedMlService) {
+        this.config = config;
+        this.mlService = sharedMlService;
     }
 
     @Override
@@ -198,7 +204,7 @@ public class CpuParamOptimizer implements Optimizer {
             if (sim.calculateHeuristic(pkg, sIdx, i) > sim.params.buyThreshold()) {
                 double buyPrice = pkg.closePrices[sIdx][i];
 
-                if (ml && i >= timeStart + 30 && i + 30 < pkg.daysCount) {
+                if (ml && i >= pkg.offsets[sIdx] + 30 && i + 30 < pkg.daysCount) {
                     collectMLSample(sim, pkg, sIdx, i, buyPrice);
                 }
 

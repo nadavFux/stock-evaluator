@@ -1,5 +1,6 @@
 package com.stock.analyzer.service;
 
+import ai.djl.Device;
 import ai.djl.Model;
 import ai.djl.inference.Predictor;
 import ai.djl.ndarray.NDArray;
@@ -43,8 +44,8 @@ public class MLModelService {
     private final List<Float> labels = new ArrayList<>();
 
     public MLModelService() {
-        NDManager manager = NDManager.newBaseManager();
-        this.model = Model.newInstance("stock-lstm");
+        NDManager manager = NDManager.newBaseManager(Device.cpu());
+        this.model = Model.newInstance("stock-lstm", Device.cpu());
         this.model.setBlock(buildLstmBlock());
     }
 
@@ -85,7 +86,7 @@ public class MLModelService {
 
         logger.info("Training Quantile LSTM on {} samples...", sequences.size());
 
-        try (NDManager manager = NDManager.newBaseManager()) {
+        try (NDManager manager = NDManager.newBaseManager(Device.cpu())) {
             NDArray x = manager.create(new Shape(sequences.size(), 30, 12));
             NDArray y = manager.create(new Shape(sequences.size(), 1));
 
@@ -137,7 +138,7 @@ public class MLModelService {
 
     public double[] predict(float[][] sequence) {
         if (model == null) return new double[]{0, 0, 0};
-        try (NDManager manager = NDManager.newBaseManager();
+        try (NDManager manager = NDManager.newBaseManager(Device.cpu());
              Predictor<NDList, NDList> predictor = model.newPredictor(new Translator<NDList, NDList>() {
                  @Override
                  public NDList processInput(TranslatorContext ctx, NDList input) {
