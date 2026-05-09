@@ -135,10 +135,11 @@ public class TornadoVmOptimizer implements Optimizer {
 
                 if (bestInGeneration.score() > currentBest.score()) {
                     centers.set(c, bestInGeneration);
-                    logger.info("Center {} Improved: {} | Yearly Gain: %.2f%% (vs RF: %.2f%%)".formatted(
-                            c, bestInGeneration.score(), bestInGeneration.yearlyGain(),
+                    logger.info("Center %d Improved: %.2f | Yearly Gain: %.2f%% (vs RF: %.2f%%)".formatted(
+                            c, bestInGeneration.score(), bestInGeneration.yearlyGain(), 
                             bestInGeneration.params().riskFreeRate() * 100.0));
                 }
+
             }
             radius *= 0.8;
         }

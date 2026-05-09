@@ -84,7 +84,7 @@ public class CpuParamOptimizer implements Optimizer {
                         }
                         bestScores.set(centerIdx, result.score());
                         centers.set(centerIdx, result.params());
-                        logger.info("Center {} Improved: {} | Yearly Gain: %.2f%% (vs RF: %.2f%%)".formatted(
+                        logger.info("Center %d Improved: %.2f | Yearly Gain: %.2f%% (vs RF: %.2f%%)".formatted(
                                 centerIdx, result.score(), result.yearlyGain(), 
                                 result.params().riskFreeRate() * 100.0));
                     }
