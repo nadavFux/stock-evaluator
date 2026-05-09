@@ -42,17 +42,20 @@ public class CpuParamOptimizer implements Optimizer {
         logger.info("Starting Multi-Start Param Optimization Workflow (CPU)...");
         SimulationDataPackage dataPkg = new SimulationDataPackage(allStocks);
 
-        int M = 5;
+        int centersCount = (config.centersCount != null) ? config.centersCount : 5;
+        int populationSize = (config.populationSize != null) ? config.populationSize : 500;
+        int totalGenerations = (config.generations != null) ? config.generations : 10;
+
         List<SimulationParams> centers = new ArrayList<>();
         centers.add(centerParamsFromConfig());
-        for (int i = 1; i < M; i++) {
+        for (int i = 1; i < centersCount; i++) {
             centers.add(randomize(centers.get(0), 1.0));
         }
 
-        List<Double> bestScores = new ArrayList<>(Collections.nCopies(M, -100.0));
-        boolean[] rescueModes = new boolean[M];
+        List<Double> bestScores = new ArrayList<>(Collections.nCopies(centersCount, -100.0));
+        boolean[] rescueModes = new boolean[centersCount];
         
-        for (int i = 0; i < M; i++) {
+        for (int i = 0; i < centersCount; i++) {
             double initialScore = evaluateCandidate(centers.get(i), dataPkg, false);
             bestScores.set(i, initialScore);
             rescueModes[i] = (initialScore == -100.0);
@@ -61,13 +64,13 @@ public class CpuParamOptimizer implements Optimizer {
 
         double radius = 0.25;
 
-        for (int gen = 1; gen <= 10 && radius >= 0.05; gen++) {
+        for (int gen = 1; gen <= totalGenerations && radius >= 0.05; gen++) {
             logger.info("Generation {} (Radius: {})", gen, radius);
 
             List<Integer> subset = getShuffledIndices(dataPkg.stockCount).subList(0, Math.max(1, dataPkg.stockCount / 2));
 
             List<CompletableFuture<Void>> futures = new ArrayList<>();
-            for (int c = 0; c < M; c++) {
+            for (int c = 0; c < centersCount; c++) {
                 final int centerIdx = c;
                 SimulationParams center = centers.get(centerIdx);
                 double currentBest = bestScores.get(centerIdx);
@@ -75,7 +78,7 @@ public class CpuParamOptimizer implements Optimizer {
 
                 final double currentRadius = radius;
                 futures.add(CompletableFuture.runAsync(() -> {
-                    CandidateResult result = runGeneration(center, currentBest, currentRadius, 500, rescue, dataPkg, subset);
+                    CandidateResult result = runGeneration(center, currentBest, currentRadius, populationSize, rescue, dataPkg, subset);
 
                     if (result.score() > currentBest) {
                         if (rescue && result.score() > -90.0) {
@@ -98,7 +101,7 @@ public class CpuParamOptimizer implements Optimizer {
 
         logger.info("Optimization Complete. Selecting global winner and finalizing ML training data...");
         int bestIdx = 0;
-        for (int i = 1; i < M; i++) {
+        for (int i = 1; i < centersCount; i++) {
             if (bestScores.get(i) > bestScores.get(bestIdx)) {
                 bestIdx = i;
             }

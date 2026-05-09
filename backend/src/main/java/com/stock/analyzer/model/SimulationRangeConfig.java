@@ -59,6 +59,11 @@ public class SimulationRangeConfig {
     @NotNull
     public String outputPath;
 
+    // Optimization Search Config
+    public Integer centersCount;
+    public Integer populationSize;
+    public Integer generations;
+
     // Weight Ranges
     public List<Double> movingAvgGapWeight;
     public List<Double> reversionToMeanWeight;

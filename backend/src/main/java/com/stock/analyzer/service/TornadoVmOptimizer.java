@@ -89,7 +89,10 @@ public class TornadoVmOptimizer implements Optimizer {
         flattenToTechData(dataPkg);
 
         // Initialize multiple starting points (centers) for the search
-        int centersCount = 6;
+        int centersCount = (config.centersCount != null) ? config.centersCount : 6;
+        int populationSize = (config.populationSize != null) ? config.populationSize : 600;
+        int totalGenerations = (config.generations != null) ? config.generations : 7;
+
         List<CandidateResult> centers = new ArrayList<>();
         SimulationParams configCenter = centerParamsFromConfig();
         for (int i = 0; i < centersCount; i++) {
@@ -104,8 +107,8 @@ public class TornadoVmOptimizer implements Optimizer {
 
         // Iterative refinement (Zoom Optimization)
         double radius = 0.25;
-        for (int gen = 1; gen <= 7 && radius >= 0.05; gen++) {
-            logger.info("Generation {}/7 (Radius: {})", gen, radius);
+        for (int gen = 1; gen <= totalGenerations && radius >= 0.05; gen++) {
+            logger.info("Generation {}/{} (Radius: {})", gen, totalGenerations, radius);
             List<Integer> shuffled = getShuffledIndices(dataPkg.stockCount);
             List<Integer> subset = shuffled.subList(0, Math.max(1, dataPkg.stockCount / 2));
             IntArray gpuSubset = IntArray.fromArray(subset.stream().mapToInt(it -> it).toArray());
@@ -114,7 +117,7 @@ public class TornadoVmOptimizer implements Optimizer {
                 CandidateResult currentBest = centers.get(c);
 
                 List<SimulationParams> population = new ArrayList<>();
-                for (int i = 0; i < 600; i++) {
+                for (int i = 0; i < populationSize; i++) {
                     population.add(i == 0 ? currentBest.params() : fallback.randomize(currentBest.params(), radius));
                 }
 
@@ -159,7 +162,10 @@ public class TornadoVmOptimizer implements Optimizer {
         return (res != null && !res.isEmpty()) ? res.get(0) : new CandidateResult(p, -100.0, 0.0);
     }
 
-    private List<CandidateResult> evaluateGpu2D(List<SimulationParams> candidates, IntArray currentSubsetIdx, SimulationDataPackage pkg, boolean rescue) {
+    List<CandidateResult> evaluateGpu2D(List<SimulationParams> candidates, IntArray currentSubsetIdx, SimulationDataPackage pkg, boolean rescue) {
+        // Ensure buffers are allocated for direct calls (e.g. from tests)
+        preallocateBuffers(pkg.stockCount, pkg.daysCount);
+
         int populationSize = candidates.size();
         int subsetSize = currentSubsetIdx.getSize();
         int totalStocks = pkg.stockCount;
