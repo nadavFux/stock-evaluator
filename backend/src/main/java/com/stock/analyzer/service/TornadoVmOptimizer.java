@@ -10,7 +10,6 @@ import uk.ac.manchester.tornado.api.TaskGraph;
 import uk.ac.manchester.tornado.api.TornadoExecutionPlan;
 import uk.ac.manchester.tornado.api.annotations.Parallel;
 import uk.ac.manchester.tornado.api.enums.DataTransferMode;
-import uk.ac.manchester.tornado.api.math.TornadoMath;
 import uk.ac.manchester.tornado.api.types.arrays.FloatArray;
 import uk.ac.manchester.tornado.api.types.arrays.IntArray;
 
@@ -34,7 +33,7 @@ public class TornadoVmOptimizer implements Optimizer {
     private static final int PARAMETER_STRIDE = 24;
     private static final int OPTIMIZATION_RESULT_STRIDE = 5;
     private static final int GRID_TASK_STRIDE = 3;
-    private static final int MAX_BATCH_SIZE = 20;
+    private static final int MAX_BATCH_SIZE = 30;
 
     // Simulation Constants
     private static final int DAYS_PER_YEAR = 252;
@@ -93,7 +92,7 @@ public class TornadoVmOptimizer implements Optimizer {
 
         // Initialize multiple starting points (centers) for the search
         int centersCount = (config.centersCount != null) ? config.centersCount : 3;
-        int populationSize = (config.populationSize != null) ? config.populationSize : 100;
+        int populationSize = (config.populationSize != null) ? config.populationSize : 500;
         int totalGenerations = (config.generations != null) ? config.generations : 6;
 
         List<CandidateResult> centers = new ArrayList<>();

@@ -75,14 +75,12 @@ public class StockDataService {
     }
 public Stock enrich(BaseStock base) {
     try {
-        JsonObject idData = getIdentifier(base.ticker_symbol());
-        if (idData == null) idData = getIdentifier("IL-" + base.ticker_symbol());
-        if (idData == null) return null;
+        JsonObject idData = resolveIdentifier(base.ticker_symbol(), base.exchange_symbol());
 
-        String isin = idData.getAsJsonPrimitive("isin").getAsString();
-        String fullName = idData.getAsJsonPrimitive("companyName").getAsString();
+        String isin = (idData != null && idData.has("isin")) ? idData.get("isin").getAsString() : "SYN-" + base.ticker_symbol();
+        String fullName = (idData != null && idData.has("companyName")) ? idData.get("companyName").getAsString() : base.name();
 
-        Double techScore = fetchTechScore(isin);
+        Double techScore = resolveTechnicalScore(isin, base.ticker_symbol());
 
         return new Stock(base.company_id(), base.name(), base.ticker_symbol(), base.exchange_symbol(),
                 base.filing_date(), base.market_cap_before_filing_date(), base.final_assessment(),
@@ -93,12 +91,45 @@ public Stock enrich(BaseStock base) {
     }
 }
 
+private JsonObject resolveIdentifier(String ticker, String exchange) {
+    // 1. Direct lookup
+    JsonObject data = getIdentifier(ticker);
+    if (data != null) return data;
+
+    // 2. TASE specific formats
+    if ("TASE".equals(exchange)) {
+        data = getIdentifier("IL-" + ticker);
+        if (data != null) return data;
+    }
+
+    // 3. Punctuation variations
+    if (ticker.contains(".")) {
+        data = getIdentifier(ticker.replace(".", " "));
+        if (data == null) data = getIdentifier(ticker.replace(".", ""));
+    }
+
+    return data;
+}
+
+private Double resolveTechnicalScore(String isin, String ticker) {
+    Double score = fetchTechScore(isin);
+    return (score != null) ? score : fetchTechScore(ticker);
+}
+
 
     private JsonObject getIdentifier(String ticker) {
-        String body = httpClient.get(identifierUrl + ticker, authHeaders).join();
-        if (body == null) return null;
-        JsonArray data = JsonParser.parseString(body).getAsJsonObject().getAsJsonArray("data");
-        return data.size() > 0 ? data.get(0).getAsJsonObject() : null;
+        try {
+            String body = httpClient.get(identifierUrl + ticker, authHeaders).join();
+            if (body == null) return null;
+            
+            JsonObject root = JsonParser.parseString(body).getAsJsonObject();
+            if (!root.has("data")) return null;
+            
+            JsonArray data = root.getAsJsonArray("data");
+            return data.size() > 0 ? data.get(0).getAsJsonObject() : null;
+        } catch (Exception e) {
+            return null;
+        }
     }
 
     private Double fetchTechScore(String isin) {

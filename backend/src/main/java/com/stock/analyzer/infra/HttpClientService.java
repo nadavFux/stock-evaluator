@@ -35,9 +35,7 @@ public class HttpClientService {
             try {
                 logger.debug("acquire 1 {} {} ", url, limiter);
                 limiter.acquire();
-                HttpRequest.Builder builder = HttpRequest.newBuilder()
-                        .uri(URI.create(url))
-                        .timeout(Duration.ofSeconds(3))
+                HttpRequest.Builder builder = createBaseBuilder(url)
                         .GET();
 
                 if (headers != null) {
@@ -46,6 +44,10 @@ public class HttpClientService {
 
                 HttpRequest request = builder.build();
                 var response = client.send(request, HttpResponse.BodyHandlers.ofString());
+                if (response.statusCode() == 204) {
+                    logger.info("GET to {} returned 204 No Content", url);
+                    return null;
+                }
                 if (response.statusCode() != 200) {
                     logger.error("GET to {} failed with status: {}", url, response.statusCode());
                     return null;
@@ -68,9 +70,7 @@ public class HttpClientService {
             try {
                 logger.debug("acquire 2 {} {} ", url, limiter);
                 limiter.acquire();
-                HttpRequest.Builder builder = HttpRequest.newBuilder()
-                        .uri(URI.create(url))
-                        .timeout(Duration.ofSeconds(3))
+                HttpRequest.Builder builder = createBaseBuilder(url)
                         .POST(HttpRequest.BodyPublishers.ofString(jsonBody));
 
                 if (headers != null) {
@@ -92,5 +92,14 @@ public class HttpClientService {
                 limiter.release();
             }
         });
+    }
+
+    private HttpRequest.Builder createBaseBuilder(String url) {
+        return HttpRequest.newBuilder()
+                .uri(URI.create(url))
+                .timeout(Duration.ofSeconds(5))
+                .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+                .header("Accept", "application/json, text/plain, */*")
+                .header("Accept-Language", "en-US,en;q=0.9,he;q=0.8");
     }
 }
