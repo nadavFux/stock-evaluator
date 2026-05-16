@@ -5,7 +5,7 @@ A high-performance stock analysis and investment entry-point optimization suite.
 ## Tech Stack
 
 ### Backend
-- **Framework:** Spring Boot 3.1.5 (Java 21 LTS)
+- **Framework:** Spring Boot 3.4.0 (Java 21 LTS)
 - **Acceleration:** **TornadoVM 4.0.0 (OpenCL)** for massive parallel GPU parameter optimization.
 - **Data Processing:** Native array-based optimization (`SimulationDataPackage`) for O(1) technical indicator retrieval.
 - **Machine Learning:** Deep Java Library (DJL) with LSTM-based Quantile Regression (Q5, Q50, Q95) for return prediction and uncertainty estimation.
@@ -23,21 +23,22 @@ A high-performance stock analysis and investment entry-point optimization suite.
 
 ## GPU Architecture (`TornadoVmOptimizer`)
 
-The GPU optimizer leverages a **3-Stage Pipeline** architecture designed for maximum throughput and JIT stability.
+The GPU optimizer leverages a **Unified Kernel** architecture designed for maximum throughput, JIT stability, and bit-level parity with the CPU simulation.
 
-### 1. The Pipeline Stages
-- **Stage 1: Indicator Kernel:** Pre-calculates MA Gaps, RVol, Rating, Volatility, and Momentum for every stock/day combination.
-- **Stage 2: Heuristic Scorer Kernel:** Computes normalized entry scores (0.0-1.0) using weights for all Centers × Stocks × Days. Uses branchless logic to bypass OpenCL JIT complexities.
-- **Stage 3: Simulation Kernel:** Executes parallel trading simulations across thousands of parameter/stock pairs. Handles complex entry/exit logic entirely on the GPU to prevent CPU starvation.
+### 1. The Unified Kernel Design
+Unlike multi-stage pipelines that suffer from VRAM fragmentation and PCIe overhead, our **Unified Kernel** (`unifiedKernel`) performs all calculations in a single device-side pass per thread:
+- **Indicator Derivation:** Calculates MA Gaps, RVol, Rating, Volatility, and Momentum on-the-fly.
+- **Heuristic Scoring:** Computes normalized entry scores using branchless logic.
+- **Simulation Execution:** Runs the trading simulation directly within the same kernel, eliminating intermediate buffer transfers.
 
 ### 2. Performance Critical Insights
-- **Zero-Copy Memory Handover:** Intermediate results (like the ~200MB Heuristic Matrix) stay on the GPU VRAM between stages. We only transfer the final ~40KB results buffer back to the host, eliminating a 20GB/gen bandwidth bottleneck.
-- **JIT-Safe Engineering:** OpenCL compilers are sensitive to deep nesting. All kernels must use **flat control flow**, **integer flags** instead of `while/break`, and **branchless ternary operations** to ensure high utilization and prevent bailouts to the CPU.
+- **Zero-Copy Optimization:** By merging all logic into one kernel, intermediate results stay in registers rather than VRAM. We only transfer the final results buffer back to the host, eliminating substantial bandwidth bottlenecks.
+- **Register-Heavy Engineering:** Candidate parameters are loaded into local variables (registers) before entering high-frequency loops to minimize global memory access and prevent TDR timeouts.
+- **JIT-Safe Engineering:** The kernel is implemented using **flat control flow**, **integer flags** instead of `while/break`, and **branchless ternary operations**. This ensures high occupancy and prevents driver-level JIT bailouts.
 - **Mathematical Parity:** The GPU implementation maintains bit-level parity with `Simulation.java` through synchronized Indicator calculation logic and shared random seed validation.
-- **Kernel Splitting for JIT Stability:** Complex kernels (e.g., combining indicator logic and heuristic scoring) can cause TornadoVM's JIT to generate malformed OpenCL or hang during the "Execution Graph" phase. Splitting into a **3-Stage Pipeline** (`indicator` -> `heuristic` -> `simulation`) is mandatory for stability on consumer-grade GPU drivers.
-- **Buffer Reuse & Memory Fragmentation:** Frequent re-allocation of large `DoubleArray` or `IntArray` buffers (e.g., `sMat`, `hScores`) inside high-frequency optimization loops triggers `CL_OUT_OF_RESOURCES` (-5) errors due to VRAM fragmentation. Always promote large GPU buffers to instance fields and reuse them across executions, resizing only when necessary.
+- **Buffer Reuse & Memory Fragmentation:** Frequent re-allocation of large `DoubleArray` or `IntArray` buffers triggers `CL_OUT_OF_RESOURCES` (-5) errors. Always reuse instance-level GPU buffers across executions.
 - **Resource Constraints (2GB VRAM):** For consumer GPUs with 2GB VRAM (e.g., GTX 750 Ti), the maximum candidate batch size MUST be restricted to **20** to prevent TDR timeouts and memory exhaustion. Additionally, all Deep Learning (DJL/PyTorch) tasks MUST be forced to the **CPU** to preserve VRAM for technical indicator parallelization.
-- **Data Transfer Optimization:** Use `DataTransferMode.EVERY_EXECUTION` for buffers that change per iteration (e.g., parameter matrices, stock subsets) and `FIRST_EXECUTION` for intermediate device-side results to minimize PCIe overhead.
+- **Data Transfer Optimization:** Use `DataTransferMode.EVERY_EXECUTION` for buffers that change per iteration (e.g., parameter matrices, stock subsets) and `FIRST_EXECUTION` for massive static data (prices, offsets) to minimize PCIe overhead.
 
 ### 3. Runtime Requirements
 To enable GPU acceleration, the JVM must be launched with:

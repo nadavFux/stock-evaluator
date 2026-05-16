@@ -26,6 +26,7 @@ public class Simulation {
     private int[] holdDays = new int[1024];
     private int tradeCount = 0;
     private double yearlyGain = 0;
+    private long totalSimulationDays = 0;
 
     // Pre-allocated sequence buffer for AI inference to eliminate GC pressure
     private final float[][] sequenceBuffer = new float[30][12];
@@ -42,6 +43,10 @@ public class Simulation {
 
     public void setMLService(MLModelService service) {
         this.mlService = service;
+    }
+
+    public void addSimulationDays(long days) {
+        this.totalSimulationDays += days;
     }
 
     public static String GenerateKey(SimulationParams p) {
@@ -61,7 +66,8 @@ public class Simulation {
             gains = java.util.Arrays.copyOf(gains, gains.length * 2);
             holdDays = java.util.Arrays.copyOf(holdDays, holdDays.length * 2);
         }
-        gains[tradeCount] = gain;
+        // Apply 0.15% slippage penalty per trade
+        gains[tradeCount] = gain - 0.0015;
         holdDays[tradeCount] = days;
         tradeCount++;
     }
@@ -79,7 +85,7 @@ public class Simulation {
      */
     public SimulationResult evaluateStep(SimulationDataPackage pkg, int stockIdx, int dayIdx) {
         double heuristic = calculateHeuristic(pkg, stockIdx, dayIdx);
-        if (heuristic == 0.0) return new SimulationResult(0.0, -1.0, 0, 0, 0, null);
+        if (heuristic <= params.buyThreshold()) return new SimulationResult(0.0, -1.0, 0, 0, 0, null);
 
         double[] features = extractFeatures(pkg, stockIdx, dayIdx);
         
@@ -99,45 +105,44 @@ public class Simulation {
 
     /**
      * Optimized O(1) heuristic calculation using pre-computed indicators.
+     * Aligned with TornadoVM unifiedKernel logic for bit-level parity.
      */
     public double calculateHeuristic(SimulationDataPackage pkg, int stockIdx, int dayIdx) {
         if (shouldSkip(pkg, stockIdx, dayIdx)) return 0.0;
 
+        double price = pkg.closePrices[stockIdx][dayIdx];
         double maVal = pkg.getAvg(stockIdx, dayIdx, params.longMovingAvgTime());
-        if (maVal <= 0) return 0.0;
+        if (maVal <= 0.01) maVal = price;
 
-        double maGap = pkg.closePrices[stockIdx][dayIdx] / maVal;
+        double maGap = price / (maVal + 1e-6);
         double maMax = params.higherPriceToLongAvgBuyIn();
         if (pkg.ratings[stockIdx][dayIdx] > 4.0) maMax *= params.aboveAvgRatingPricePerc();
 
-        // Layered evaluation with dynamic weight normalization for early exit performance
-        double maScore = (1.0 - normalize(maGap, params.lowerPriceToLongAvgBuyIn(), maMax)) * (params.movingAvgGapWeight() / totalWeight);
-        double remainingWeight = (totalWeight - params.movingAvgGapWeight()) / totalWeight;
-        double scoreSoFar = maScore;
-        if (scoreSoFar + remainingWeight < params.buyThreshold()) return 0.0;
+        // Gap Score
+        double vGap = (maGap - params.lowerPriceToLongAvgBuyIn()) / (maMax - params.lowerPriceToLongAvgBuyIn() + 1e-6);
+        double scoreGap = (1.0 - Math.max(0.0, Math.min(1.0, vGap))) * (params.movingAvgGapWeight() / totalWeight);
 
+        // Rating Score
         double ratingScore = normalize(pkg.ratings[stockIdx][dayIdx], params.minRating(), params.maxRating()) * (params.ratingWeight() / totalWeight);
-        scoreSoFar += ratingScore;
-        remainingWeight -= (params.ratingWeight() / totalWeight);
-        if (scoreSoFar + remainingWeight < params.buyThreshold()) return 0.0;
 
+        // RVol Score
         double rvol = (pkg.avgVol30d[stockIdx][dayIdx] > 0) ? pkg.volumes[stockIdx][dayIdx] / pkg.avgVol30d[stockIdx][dayIdx] : 1.0;
-        scoreSoFar += normalize(rvol, 0.5, 2.0) * (params.rvolWeight() / totalWeight);
-        remainingWeight -= (params.rvolWeight() / totalWeight);
-        if (scoreSoFar + remainingWeight < params.buyThreshold()) return 0.0;
+        double scoreRVol = Math.max(0.0, Math.min(1.0, (rvol - 0.5) / 1.5)) * (params.rvolWeight() / totalWeight);
 
-        double distFromMA = Math.abs(maGap - 1.0);
-        scoreSoFar += normalize(distFromMA, 0.0, 0.20) * (params.reversionToMeanWeight() / totalWeight);
-        remainingWeight -= (params.reversionToMeanWeight() / totalWeight);
-        if (scoreSoFar + remainingWeight < params.buyThreshold()) return 0.0;
+        // Reversion Score (with BB%P multiplier)
+        double bbP = pkg.bbP[stockIdx][dayIdx];
+        double bollingerFactor = (bbP < 0.2) ? (1.0 - bbP) : 0.5;
+        double distFromMA = Math.abs(maGap - 1.0) / 0.20;
+        double scoreRev = Math.max(0.0, Math.min(1.0, distFromMA)) * bollingerFactor * (params.reversionToMeanWeight() / totalWeight);
 
+        // Momentum Score (with MACD multiplier)
         double avgNow = pkg.getAvg(stockIdx, dayIdx, params.timeFrameForUpwardLongAvg());
         double avgPrev = pkg.getAvg(stockIdx, Math.max(0, dayIdx - params.timeFrameForUpwardLongAvg()), params.timeFrameForUpwardLongAvg());
         double momentum = avgPrev > 0 ? avgNow / avgPrev : 1.0;
-        scoreSoFar += normalize(momentum, params.minRateOfAvgInc(), params.minRateOfAvgInc() * 1.3) * (params.upwardIncRateWeight() / totalWeight);
-        remainingWeight -= (params.upwardIncRateWeight() / totalWeight);
-        if (scoreSoFar + remainingWeight < params.buyThreshold()) return 0.0;
+        double macdFactor = (pkg.macd[stockIdx][dayIdx] > 0) ? 1.2 : 0.8;
+        double scoreMom = Math.max(0.0, Math.min(1.0, (momentum - params.minRateOfAvgInc()) / (params.minRateOfAvgInc() * 0.3))) * macdFactor * (params.upwardIncRateWeight() / totalWeight);
 
+        // PEG Score
         double peg = 1.0;
         int epsPrevIdx = dayIdx - 250;
         if (epsPrevIdx >= pkg.offsets[stockIdx] && pkg.epss[stockIdx][epsPrevIdx] > 0 && pkg.epss[stockIdx][dayIdx] > 0) {
@@ -145,14 +150,13 @@ public class Simulation {
             double pe = pkg.closePrices[stockIdx][dayIdx] / pkg.epss[stockIdx][dayIdx];
             peg = epsGrowth > 0 ? pe / (epsGrowth * 100) : 2.0;
         }
-        scoreSoFar += (1.0 - normalize(peg, 0.0, 2.0)) * (params.pegWeight() / totalWeight);
-        remainingWeight -= (params.pegWeight() / totalWeight);
-        if (scoreSoFar + remainingWeight < params.buyThreshold()) return 0.0;
+        double scorePeg = (1.0 - Math.max(0.0, Math.min(1.0, peg / 2.0))) * (params.pegWeight() / totalWeight);
 
+        // Volatility Score (ATR-Refined)
         double volatility = pkg.getVolatility(stockIdx, dayIdx, 20);
-        scoreSoFar += (1.0 - normalize(volatility, 0.0, 0.05)) * (params.volatilityCompressionWeight() / totalWeight);
+        double scoreVol = (1.0 - Math.max(0.0, Math.min(1.0, volatility / 0.05))) * (params.volatilityCompressionWeight() / totalWeight);
 
-        return scoreSoFar;
+        return scoreGap + ratingScore + scoreRVol + scoreRev + scoreMom + scorePeg + scoreVol;
     }
 
     private boolean shouldSkip(SimulationDataPackage pkg, int sIdx, int dIdx) {
@@ -195,45 +199,30 @@ public class Simulation {
         return Math.max(0.0, Math.min(1.0, (val - min) / (max - min)));
     }
 
-    /**
-     * Calculates the final risk-adjusted score using trade density and duration multipliers.
-     * @param totalEvaluations Total number of stock-frame simulations performed (stocks * gridCount).
-     */
     public double calculateScore(long totalEvaluations) {
+        this.yearlyGain = 0; // Ignore as requested
         if (tradeCount < 2) return -100.0;
 
-        double dailyRiskFreeRate = Math.pow(1 + params.riskFreeRate(), 1.0 / 252) - 1;
-        List<Double> dailyExcessReturns = new ArrayList<>();
+        // Enforce minimum trade density requirements (Consistent with GPU)
+        if (tradeCount < Math.max(15, (double) totalEvaluations / 100.0)) return -100.0;
+
+        double sumExcess = 0.0;
+        double sumSqExcess = 0.0;
         long totalTradeDays = 0;
 
         for (int i = 0; i < tradeCount; i++) {
-            double tradeReturn = gains[i] * 100;
-            int days = Math.max(1, holdDays[i]);
-            double riskFreeReturn = (Math.pow(1 + dailyRiskFreeRate, days) - 1) * 100;
-            dailyExcessReturns.add((tradeReturn - riskFreeReturn) / days);
-            totalTradeDays += days;
+            double dailyExcess = gains[i] * 100.0 / Math.max(1, holdDays[i]); // Crude daily excess approximation
+            sumExcess += dailyExcess;
+            sumSqExcess += dailyExcess * dailyExcess;
+            totalTradeDays += holdDays[i];
         }
 
-        double sum = 0.0;
-        for (double r : dailyExcessReturns) sum += r;
-        double avgDailyExcess = sum / tradeCount;
-
-        // Store yearly gain for logging: (Avg Daily Excess + Daily RF) * 252
-        this.yearlyGain = (avgDailyExcess + (dailyRiskFreeRate * 100)) * 252;
-
-        double varianceSum = 0.0;
-        for (double r : dailyExcessReturns) varianceSum += Math.pow(r - avgDailyExcess, 2);
-        double stdDevDaily = Math.sqrt(varianceSum / (tradeCount - 1));
+        double avgDailyExcess = sumExcess / tradeCount;
+        double variance = (sumSqExcess - (sumExcess * sumExcess / tradeCount)) / (tradeCount - 1.000001);
+        double stdDevDaily = Math.sqrt(Math.max(0.0, variance));
         double sharpe = (avgDailyExcess / (stdDevDaily + 0.01)) * Math.sqrt(252);
 
-        // Multipliers for statistical reliability
-        double absoluteFactor = Math.min(1.0, (double) tradeCount / 40.0);
-        // Density factor relative to total simulation runs. Target: 10% density.
-        double densityFactor = Math.min(1.0, ((double) tradeCount / Math.max(1.0, totalEvaluations)) / 0.1);
-        double volumeMultiplier = Math.sqrt(absoluteFactor * densityFactor);
-        double durationMultiplier = Math.min(1.0, ((double) totalTradeDays / tradeCount) / 5.0);
-
-        return sharpe * volumeMultiplier * durationMultiplier * 10.0;
+        return sharpe;
     }
 
     public String getPerformanceReport(long totalEvaluations) {

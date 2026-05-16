@@ -150,8 +150,8 @@ public class CpuParamOptimizer implements Optimizer {
                 // Total evaluation instances: stocks * grid points
                 long totalEvaluations = (long) stockSubset.size() * frames;
 
-                // Enforce minimum trade density requirements
-                boolean hasVolume = trades > Math.max(15, totalEvaluations / 25);
+                // Enforce minimum trade density requirements (1%, aligned with Simulation.java)
+                boolean hasVolume = trades > Math.max(15, totalEvaluations / 100);
                 double score = rescue ? (-100.0 + trades) : (hasVolume ? sim.calculateScore(totalEvaluations) : -100.0);
                 double yearlyGain = sim.getYearlyGain();
 
@@ -212,6 +212,8 @@ public class CpuParamOptimizer implements Optimizer {
         int searchLimit = Math.min(timeStart + searchTime, pkg.daysCount);
         int absoluteLimit = (selectTime > 0) ? Math.min(timeStart + searchTime + selectTime, pkg.daysCount) : pkg.daysCount;
 
+        sim.addSimulationDays(absoluteLimit - timeStart);
+
         for (int i = timeStart; i < searchLimit; i++) {
             if (sim.calculateHeuristic(pkg, sIdx, i) > sim.params.buyThreshold()) {
                 double buyPrice = pkg.closePrices[sIdx][i];
@@ -267,7 +269,7 @@ public class CpuParamOptimizer implements Optimizer {
                 clamp(c.minRating() + rand(4 * r), 0.0, 4.9),
                 clamp(c.maxRating() + rand(4 * r), 3.0, 5.0),
                 Math.max(1000, c.maxMarketCap() * (1 + rand(2 * r))),
-                0.10,
+                c.riskFreeRate(),
                 clamp(c.buyThreshold() + rand(r), 0.4, 0.95),
                 clamp(c.movingAvgGapWeight() + rand(r), 0.0, 1.0),
                 clamp(c.reversionToMeanWeight() + rand(r), 0.0, 1.0),

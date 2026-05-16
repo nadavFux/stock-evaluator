@@ -117,7 +117,7 @@ public class MLModelService {
             try (Trainer trainer = model.newTrainer(config)) {
                 trainer.initialize(new Shape(1, 30, 12));
 
-                int epochs = 30;
+                int epochs = 12;
                 for (int epoch = 0; epoch < epochs; epoch++) {
                     for (Batch batch : trainer.iterateDataset(trainSet)) {
                         EasyTrain.trainBatch(trainer, batch);
