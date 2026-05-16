@@ -33,7 +33,7 @@ public class TornadoVmOptimizer implements Optimizer {
     private static final int PARAMETER_STRIDE = 24;
     private static final int OPTIMIZATION_RESULT_STRIDE = 5;
     private static final int GRID_TASK_STRIDE = 3;
-    private static final int MAX_BATCH_SIZE = 35;
+    private static final int MAX_BATCH_SIZE = 30;
 
     // Simulation Constants
     private static final int DAYS_PER_YEAR = 252;
@@ -173,8 +173,8 @@ public class TornadoVmOptimizer implements Optimizer {
 
     List<CandidateResult> evaluateGpu2D(List<SimulationParams> candidates, IntArray currentSubsetIdx, SimulationDataPackage pkg, boolean rescue) {
         // Ensure buffers are allocated and data is flattened for direct calls (e.g. from tests)
-        //preallocateBuffers(pkg.stockCount, pkg.daysCount);
-        //flattenToTechData(pkg);
+        preallocateBuffers(pkg.stockCount, pkg.daysCount);
+        flattenToTechData(pkg);
 
         int populationSize = candidates.size();
         int subsetSize = currentSubsetIdx.getSize();

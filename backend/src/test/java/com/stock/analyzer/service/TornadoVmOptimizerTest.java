@@ -3,9 +3,15 @@ package com.stock.analyzer.service;
 import com.stock.analyzer.model.*;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+
+import java.lang.reflect.Field;
+import java.lang.reflect.Method;
 import java.util.ArrayList;
 import java.util.List;
+
 import static org.junit.jupiter.api.Assertions.*;
+
+import uk.ac.manchester.tornado.api.types.arrays.FloatArray;
 
 public class TornadoVmOptimizerTest {
 
@@ -42,6 +48,48 @@ public class TornadoVmOptimizerTest {
             boolean available = TornadoVmOptimizer.isAvailable();
             System.out.println("TornadoVM available: " + available);
         });
+    }
+
+    @Test
+    public void testMapParamsToFloatArray_Unit() throws Exception {
+        TornadoVmOptimizer optimizer = new TornadoVmOptimizer(config);
+        SimulationParams params = new SimulationParams(
+                0.95, 0.9, 1.1, 50, 1.05, 20, 10, 70, 0, 20, 0, 100, 1, 5, 1000000000, 0.0, 0.65,
+                0.2, 0.15, 0.2, 0.15, 0.1, 0.1, 0.1
+        );
+
+        FloatArray array = new FloatArray(24);
+
+        Method method = TornadoVmOptimizer.class.getDeclaredMethod("mapParamsToFloatArray", SimulationParams.class, FloatArray.class, int.class);
+        method.setAccessible(true);
+        method.invoke(optimizer, params, array, 0);
+
+        assertEquals(0.95f, array.get(0), 0.001);
+        assertEquals(0.9f, array.get(1), 0.001);
+        assertEquals(0.1f, array.get(23), 0.001); // volatilityCompressionWeight
+    }
+
+    @Test
+    public void testPreallocateAndFlatten_Unit() throws Exception {
+        TornadoVmOptimizer optimizer = new TornadoVmOptimizer(config);
+        List<StockGraphState> stocks = generateSyntheticStocks(2, 50);
+        SimulationDataPackage pkg = new SimulationDataPackage(stocks);
+
+        Method allocMethod = TornadoVmOptimizer.class.getDeclaredMethod("preallocateBuffers", int.class, int.class);
+        allocMethod.setAccessible(true);
+        allocMethod.invoke(optimizer, pkg.stockCount, pkg.daysCount);
+
+        Method flatMethod = TornadoVmOptimizer.class.getDeclaredMethod("flattenToTechData", SimulationDataPackage.class);
+        flatMethod.setAccessible(true);
+        flatMethod.invoke(optimizer, pkg);
+
+        Field techDataField = TornadoVmOptimizer.class.getDeclaredField("technicalData");
+        techDataField.setAccessible(true);
+        FloatArray techData = (FloatArray) techDataField.get(optimizer);
+
+        assertNotNull(techData);
+        assertTrue(techData.getSize() >= 2 * 50 * 12);
+        assertTrue(techData.get(0) > 0); // Price should be mapped
     }
 
     public static List<StockGraphState> generateSyntheticStocks(int count, int days) {
