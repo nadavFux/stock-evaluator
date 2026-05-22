@@ -41,7 +41,7 @@ public class TornadoVmOptimizer implements Optimizer {
     private static final int OPTIMIZATION_RESULT_STRIDE = 5;
     private static final int GRID_TASK_STRIDE = 3;
 
-    private static final int MAX_BATCH_SIZE = 64;
+    private static final int MAX_BATCH_SIZE = 256;
 
     // Simulation Constants
     private static final int DAYS_PER_YEAR = 252;
@@ -96,8 +96,8 @@ public class TornadoVmOptimizer implements Optimizer {
 
             // Initialize multiple starting points (centers) for the search
             int centersCount = (config.centersCount != null) ? config.centersCount : 5;
-            int populationSize = (config.populationSize != null) ? config.populationSize : MAX_BATCH_SIZE * 3;
-            int totalGenerations = (config.generations != null) ? config.generations : 10;
+            int populationSize = (config.populationSize != null) ? config.populationSize : MAX_BATCH_SIZE * 5;
+            int totalGenerations = (config.generations != null) ? config.generations : 12;
 
 
             List<CandidateResult> centers = new ArrayList<>();
@@ -199,11 +199,12 @@ public class TornadoVmOptimizer implements Optimizer {
                     TornadoExecutionPlan plan = planCache.get(planId);
                     if (plan == null) {
                         TaskGraph graph = new TaskGraph(planId)
-                                .transferToDevice(DataTransferMode.EVERY_EXECUTION, parameterMatrix, subsetIndices, simulationGrid)
+                                // FIX: Added currentGridTask to transferToDevice
+                                .transferToDevice(DataTransferMode.EVERY_EXECUTION, parameterMatrix, subsetIndices, simulationGrid, currentGridTask)
                                 .transferToDevice(DataTransferMode.FIRST_EXECUTION, technicalData, stockOffsets)
                                 .task(planId + "_task", TornadoVmOptimizer::unifiedKernel,
-                                        technicalData, subsetIndices, stockOffsets, parameterMatrix, simulationGrid,
-                                        optimizationResults, subsetSize, totalDays, currentBatchSize, gridCount) // Passed explicitly
+                                        technicalData, subsetIndices, stockOffsets, parameterMatrix, simulationGrid, currentGridTask, // FIX: Passed to kernel
+                                        optimizationResults, subsetSize, totalDays, currentBatchSize, gridCount)
                                 .transferToHost(DataTransferMode.EVERY_EXECUTION, optimizationResults);
                         plan = new TornadoExecutionPlan(graph.snapshot());
                         planCache.put(planId, plan);
@@ -275,8 +276,8 @@ public class TornadoVmOptimizer implements Optimizer {
      * 100% Branchless implementation for maximum JIT stability and parity with Simulation.java.
      */
     public static void unifiedKernel(FloatArray technicalData, IntArray subsetIndices, IntArray stockOffsets,
-                                     FloatArray parameterMatrix, IntArray simulationGrid, FloatArray optimizationResults,
-                                     int subsetSize, int totalDays, int batchSize, int gridCount) {
+                                     FloatArray parameterMatrix, IntArray simulationGrid, IntArray currentGridTask,
+                                     FloatArray optimizationResults, int subsetSize, int totalDays, int batchSize, int gridCount) {
 
         for (@Parallel int globalIdx = 0; globalIdx < batchSize * subsetSize; globalIdx++) {
             int candidateIdx = globalIdx / subsetSize;
@@ -329,10 +330,6 @@ public class TornadoVmOptimizer implements Optimizer {
             float basePSum = (stockStartOffset > 0) ? technicalData.get((globalStockIdx * totalDays + stockStartOffset - 1) * TECH_DATA_STRIDE + 1) : 0.0f;
 
             for (int d = simStart; d < finalLimit; d++) {
-                if (technicalData.get(0) == -999999.0f) {
-                    break;
-                }
-
                 int dayOffset = (globalStockIdx * totalDays + d) * TECH_DATA_STRIDE;
                 float price = technicalData.get(dayOffset);
 
