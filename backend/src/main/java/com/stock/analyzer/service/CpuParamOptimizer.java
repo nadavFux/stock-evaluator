@@ -150,8 +150,9 @@ public class CpuParamOptimizer implements Optimizer {
                 // Total evaluation instances: stocks * grid points
                 long totalEvaluations = (long) stockSubset.size() * frames;
 
-                // Enforce minimum trade density requirements (1%, aligned with Simulation.java)
-                boolean hasVolume = trades > Math.max(15, totalEvaluations / 100);
+                // Relaxed trade density requirements (Consistent with GPU fixes)
+                // Ignore totalEvaluations (gridCount) to avoid constant -100 on small datasets.
+                boolean hasVolume = trades >= 5;
                 double score = rescue ? (-100.0 + trades) : (hasVolume ? sim.calculateScore(totalEvaluations) : -100.0);
                 double yearlyGain = sim.getYearlyGain();
 

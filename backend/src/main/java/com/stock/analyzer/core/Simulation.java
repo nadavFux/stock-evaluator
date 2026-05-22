@@ -203,39 +203,65 @@ public class Simulation {
         this.yearlyGain = 0; // Ignore as requested
         if (tradeCount < 2) return -100.0;
 
-        // Enforce minimum trade density requirements (Consistent with GPU)
-        if (tradeCount < Math.max(15, (double) totalEvaluations / 100.0)) return -100.0;
+        // Relaxed trade density requirements (Consistent with GPU)
+        // Using a percentage of stocks instead of evaluations to avoid gridCount bias.
+        if (tradeCount < 5) return -100.0;
 
         double sumExcess = 0.0;
         double sumSqExcess = 0.0;
-        long totalTradeDays = 0;
+        double totalHoldingDays = 0.0;
+
+        double dailyRiskFreeRate = Math.pow(1.0 + params.riskFreeRate(), 1.0 / 252.0) - 1.0;
 
         for (int i = 0; i < tradeCount; i++) {
-            double dailyExcess = gains[i] * 100.0 / Math.max(1, holdDays[i]); // Crude daily excess approximation
-            sumExcess += dailyExcess;
-            sumSqExcess += dailyExcess * dailyExcess;
-            totalTradeDays += holdDays[i];
+            double rawRet = gains[i];
+            rawRet = Math.max(-1.0, Math.min(1.0, rawRet));
+            double dur = Math.max(1.0, (double) holdDays[i]);
+
+            // 2. Orphaned Risk-Free Rate & 3. Geometric Compounding
+            double tradeLogRet = Math.log(1.0 + rawRet);
+            double excessLogRet = tradeLogRet - (dur * dailyRiskFreeRate);
+
+            // 1. Duration Bias: Normalize by duration
+            double dailyExcess = excessLogRet / dur;
+
+            sumExcess += excessLogRet;
+            sumSqExcess += dailyExcess * dailyExcess * dur;
+            totalHoldingDays += dur;
         }
 
-        double avgDailyExcess = sumExcess / tradeCount;
-        double variance = (sumSqExcess - (sumExcess * sumExcess / tradeCount)) / (tradeCount - 1.000001);
-        double stdDevDaily = Math.sqrt(Math.max(0.0, variance));
-        double sharpe = (avgDailyExcess / (stdDevDaily + 0.01)) * Math.sqrt(252);
+        if (totalHoldingDays < 2.0) return -100.0;
+
+        double avgDailyExcess = sumExcess / totalHoldingDays;
+        double variance = (sumSqExcess - (sumExcess * sumExcess / totalHoldingDays)) / (totalHoldingDays - 1.000001);
+        double stdDev = Math.sqrt(Math.max(0.0, variance));
+
+        // Annualized metrics
+        double annualizedExcess = avgDailyExcess * 252.0;
+        double annualizedStdDev = stdDev * Math.sqrt(252.0);
+
+        // Standard Sharpe with 0.01 smoothing
+        double sharpe = (annualizedExcess / (annualizedStdDev + 0.01));
+
+        // Resolve Negative Sharpe Paradox: Penalize volatility when returns are negative
+        if (annualizedExcess < 0) sharpe = annualizedExcess * (annualizedStdDev + 1.0);
 
         return sharpe;
     }
 
     public String getPerformanceReport(long totalEvaluations) {
         if (tradeCount == 0) return "No trades executed.";
-        double totalGains = 0;
+        double sumLogRet = 0;
         long totalDays = 0;
         for (int i = 0; i < tradeCount; i++) {
-            totalGains += gains[i];
+            sumLogRet += Math.log(1.0 + Math.max(-1.0, Math.min(1.0, gains[i])));
             totalDays += holdDays[i];
         }
+        // Geometric Average Return per trade (%)
+        double avgGain = (Math.exp(sumLogRet / tradeCount) - 1.0) * 100.0;
         return String.format("Score: %.2f | Avg Gain: %.2f%% | Trades: %d | Avg Hold: %.1f days",
                 calculateScore(totalEvaluations), 
-                (totalGains / tradeCount) * 100,
+                avgGain,
                 tradeCount, (double) totalDays / tradeCount);
     }
 

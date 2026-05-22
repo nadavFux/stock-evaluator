@@ -63,6 +63,9 @@ These architectural mandates are critical for maintaining the stability and perf
 ### F. Data Transfer Modes
 **Mandate**: Use `FIRST_EXECUTION` for massive static data (prices, offsets) and `EVERY_EXECUTION` for small dynamic data (parameters, results).
 
+### G. Run Environment
+**Mandate** Use the environemnt param "@C:\Users\NF\tornadovm-4.0.0-opencl\tornado-argfile --enable-preview --enable-native-access=ALL-UNNAMED -Dtornado.sdk.root=C:\Users\NF\tornadovm-4.0.0-opencl      -Djava.library.path=C:\Users\NF\tornadovm-4.0.0-opencl\lib" to run or test run the program
+
 ## 5. Development Mandates
 - **Logic Parity:** Any change to indicator logic in `StatsCalculator` MUST be mirrored in `TornadoVmOptimizer.unifiedKernel`.
 - **Validation:** Always run `TornadoVmOptimizerTest.testGpuCpuParity()` after modifying kernel logic.

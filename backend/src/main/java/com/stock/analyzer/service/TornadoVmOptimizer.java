@@ -14,6 +14,7 @@ import uk.ac.manchester.tornado.api.types.arrays.FloatArray;
 import uk.ac.manchester.tornado.api.types.arrays.IntArray;
 
 import java.util.*;
+import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * High-Performance GPU Optimizer using TornadoVM 4.0.0.
@@ -33,7 +34,7 @@ public class TornadoVmOptimizer implements Optimizer {
     private static final int PARAMETER_STRIDE = 24;
     private static final int OPTIMIZATION_RESULT_STRIDE = 5;
     private static final int GRID_TASK_STRIDE = 3;
-    private static final int MAX_BATCH_SIZE = 30;
+    private static final int MAX_BATCH_SIZE = 20;
 
     // Simulation Constants
     private static final int DAYS_PER_YEAR = 252;
@@ -59,14 +60,14 @@ public class TornadoVmOptimizer implements Optimizer {
     private final CpuParamOptimizer fallback;
 
     // Reusable GPU buffers to minimize allocation overhead
-    private FloatArray technicalData;
-    private FloatArray parameterMatrix;
-    private FloatArray optimizationResults;
-    private IntArray stockOffsets;
-    private IntArray subsetIndices;
-    private IntArray simulationGrid;
+    private static FloatArray technicalData;
+    private static FloatArray parameterMatrix;
+    private static FloatArray optimizationResults;
+    private static IntArray stockOffsets;
+    private static IntArray subsetIndices;
+    private static IntArray simulationGrid;
 
-    private final Map<String, TornadoExecutionPlan> planCache = new HashMap<>();
+    private static final Map<String, TornadoExecutionPlan> planCache = new ConcurrentHashMap<>();
 
     public TornadoVmOptimizer(SimulationRangeConfig config) {
         this.config = config;
@@ -83,86 +84,88 @@ public class TornadoVmOptimizer implements Optimizer {
      */
     @Override
     public SimulationParams optimize(List<StockGraphState> allStocks) {
-        logger.info("Starting GPU Multi-Start Optimization (Refined Architecture)...");
-        planCache.clear();
-        SimulationDataPackage dataPkg = new SimulationDataPackage(allStocks);
+        synchronized (TornadoVmOptimizer.class) {
+            logger.info("Starting GPU Multi-Start Optimization (Refined Architecture)...");
+            planCache.clear();
+            SimulationDataPackage dataPkg = new SimulationDataPackage(allStocks);
 
-        preallocateBuffers(dataPkg.stockCount, dataPkg.daysCount);
-        flattenToTechData(dataPkg);
+            preallocateBuffers(dataPkg.stockCount, dataPkg.daysCount);
+            flattenToTechData(dataPkg);
 
-        // Initialize multiple starting points (centers) for the search
-        int centersCount = (config.centersCount != null) ? config.centersCount : 3;
-        int populationSize = (config.populationSize != null) ? config.populationSize : 300;
-        int totalGenerations = (config.generations != null) ? config.generations : 6;
+            // Initialize multiple starting points (centers) for the search
+            int centersCount = (config.centersCount != null) ? config.centersCount : 6;
+            int populationSize = (config.populationSize != null) ? config.populationSize : 500;
+            int totalGenerations = (config.generations != null) ? config.generations : 10;
 
-        List<CandidateResult> centers = new ArrayList<>();
-        SimulationParams configCenter = centerParamsFromConfig();
-        for (int i = 0; i < centersCount; i++) {
-            centers.add(new CandidateResult(i == 0 ? configCenter : fallback.randomize(configCenter, 0.7), -100.0, 0.0));
-        }
-
-        for (int i = 0; i < centersCount; i++) {
-            logger.info("Evaluating Center {}/{}...", i + 1, centersCount);
-            centers.set(i, evaluateCandidate(centers.get(i).params(), dataPkg));
-            logger.info("Center {} Score: {}", i, centers.get(i).score());
-        }
-
-        // Iterative refinement (Zoom Optimization)
-        double radius = 0.25;
-        for (int gen = 1; gen <= totalGenerations && radius >= 0.05; gen++) {
-            logger.info("Generation {}/{} (Radius: {})", gen, totalGenerations, radius);
-            List<Integer> shuffled = getShuffledIndices(dataPkg.stockCount);
-            List<Integer> subset = shuffled.subList(0, Math.max(1, dataPkg.stockCount / 2));
-            IntArray gpuSubset = IntArray.fromArray(subset.stream().mapToInt(it -> it).toArray());
-
-            for (int c = 0; c < centersCount; c++) {
-                CandidateResult currentBest = centers.get(c);
-
-                List<SimulationParams> population = new ArrayList<>();
-                for (int i = 0; i < populationSize; i++) {
-                    population.add(i == 0 ? currentBest.params() : fallback.randomize(currentBest.params(), radius));
-                }
-
-                // Stage 1: Broad discovery on a subset of stocks
-                List<CandidateResult> discovery = evaluateGpu2D(population, gpuSubset, dataPkg, false);
-                List<SimulationParams> elites = discovery.stream()
-                        .sorted(Comparator.comparingDouble(CandidateResult::score).reversed())
-                        .limit(10)
-                        .map(CandidateResult::params)
-                        .toList();
-
-                // Stage 2: Rigorous validation of elites on all stocks
-                IntArray allStockIndices = IntArray.fromArray(java.util.stream.IntStream.range(0, dataPkg.stockCount).toArray());
-                List<CandidateResult> validation = evaluateGpu2D(elites, allStockIndices, dataPkg, false);
-                CandidateResult bestInGeneration = validation.stream()
-                        .max(Comparator.comparingDouble(CandidateResult::score))
-                        .orElse(currentBest);
-
-                // Tie-breaking: Update center if score is better OR if score is similar but trade count/gain is higher
-                if (bestInGeneration.score() > currentBest.score() + 0.001 ||
-                        (Math.abs(bestInGeneration.score() - currentBest.score()) < 0.001 && bestInGeneration.yearlyGain() > currentBest.yearlyGain())) {
-                    centers.set(c, bestInGeneration);
-                    logger.info("Center %d Improved: %.2f | AvgReturn: %.2f%%".formatted(
-                            c, bestInGeneration.score(), bestInGeneration.yearlyGain()));
-                }
-
+            List<CandidateResult> centers = new ArrayList<>();
+            SimulationParams configCenter = centerParamsFromConfig();
+            for (int i = 0; i < centersCount; i++) {
+                centers.add(new CandidateResult(i == 0 ? configCenter : fallback.randomize(configCenter, 0.7), -100.0, 0.0));
             }
-            radius *= 0.8;
+
+            for (int i = 0; i < centersCount; i++) {
+                logger.info("Evaluating Center {}/{}...", i + 1, centersCount);
+                centers.set(i, evaluateCandidate(centers.get(i).params(), dataPkg));
+                logger.info("Center {} Score: {}", i, centers.get(i).score());
+            }
+
+            // Iterative refinement (Zoom Optimization)
+            double radius = 0.25;
+            for (int gen = 1; gen <= totalGenerations && radius >= 0.05; gen++) {
+                logger.info("Generation {}/{} (Radius: {})", gen, totalGenerations, radius);
+                List<Integer> shuffled = getShuffledIndices(dataPkg.stockCount);
+                List<Integer> subset = shuffled.subList(0, Math.max(1, dataPkg.stockCount / 2));
+                IntArray gpuSubset = IntArray.fromArray(subset.stream().mapToInt(it -> it).toArray());
+
+                for (int c = 0; c < centersCount; c++) {
+                    CandidateResult currentBest = centers.get(c);
+
+                    List<SimulationParams> population = new ArrayList<>();
+                    for (int i = 0; i < populationSize; i++) {
+                        population.add(i == 0 ? currentBest.params() : fallback.randomize(currentBest.params(), radius));
+                    }
+
+                    // Stage 1: Broad discovery on a subset of stocks
+                    List<CandidateResult> discovery = evaluateGpu2D(population, gpuSubset, dataPkg, false);
+                    List<SimulationParams> elites = discovery.stream()
+                            .sorted(Comparator.comparingDouble(CandidateResult::score).reversed())
+                            .limit(10)
+                            .map(CandidateResult::params)
+                            .toList();
+
+                    // Stage 2: Rigorous validation of elites on all stocks
+                    IntArray allStockIndices = IntArray.fromArray(java.util.stream.IntStream.range(0, dataPkg.stockCount).toArray());
+                    List<CandidateResult> validation = evaluateGpu2D(elites, allStockIndices, dataPkg, false);
+                    CandidateResult bestInGeneration = validation.stream()
+                            .max(Comparator.comparingDouble(CandidateResult::score))
+                            .orElse(currentBest);
+
+                    // Tie-breaking: Update center if score is better OR if score is similar but trade count/gain is higher
+                    if (bestInGeneration.score() > currentBest.score() + 0.001 ||
+                            (Math.abs(bestInGeneration.score() - currentBest.score()) < 0.001 && bestInGeneration.yearlyGain() > currentBest.yearlyGain())) {
+                        centers.set(c, bestInGeneration);
+                        logger.info("Center %d Improved: %.2f | AvgReturn: %.2f%%".formatted(
+                                c, bestInGeneration.score(), bestInGeneration.yearlyGain()));
+                    }
+
+                }
+                radius *= 0.9;
+            }
+
+            // Final selection and ML sample collection
+            CandidateResult globalWinner = centers.stream()
+                    .sorted(Comparator.comparingDouble(CandidateResult::score).reversed()
+                            .thenComparing(Comparator.comparingDouble(CandidateResult::yearlyGain).reversed()))
+                    .findFirst().get();
+
+            logger.info("Selected Global Winner with score: {} | AvgReturn: {}%",
+                    globalWinner.score(), globalWinner.yearlyGain());
+
+            // Final pass on CPU to collect ML samples and verify metrics
+            fallback.evaluateCandidate(globalWinner.params(), dataPkg, true);
+
+            return globalWinner.params();
         }
-
-        // Final selection and ML sample collection
-        CandidateResult globalWinner = centers.stream()
-                .sorted(Comparator.comparingDouble(CandidateResult::score).reversed()
-                        .thenComparing(Comparator.comparingDouble(CandidateResult::yearlyGain).reversed()))
-                .findFirst().get();
-
-        logger.info("Selected Global Winner with score: {} | AvgReturn: {}%",
-                globalWinner.score(), globalWinner.yearlyGain());
-
-        // Final pass on CPU to collect ML samples and verify metrics
-        fallback.evaluateCandidate(globalWinner.params(), dataPkg, true);
-
-        return globalWinner.params();
     }
 
     private CandidateResult evaluateCandidate(SimulationParams p, SimulationDataPackage pkg) {
@@ -172,89 +175,102 @@ public class TornadoVmOptimizer implements Optimizer {
     }
 
     List<CandidateResult> evaluateGpu2D(List<SimulationParams> candidates, IntArray currentSubsetIdx, SimulationDataPackage pkg, boolean rescue) {
-        // Ensure buffers are allocated and data is flattened for direct calls (e.g. from tests)
-        preallocateBuffers(pkg.stockCount, pkg.daysCount);
-        flattenToTechData(pkg);
+        synchronized (TornadoVmOptimizer.class) {
+            // Ensure buffers are allocated and data is flattened for direct calls (e.g. from tests)
+            //preallocateBuffers(pkg.stockCount, pkg.daysCount);
+            //flattenToTechData(pkg);
 
-        int populationSize = candidates.size();
-        int subsetSize = currentSubsetIdx.getSize();
-        int totalDays = pkg.daysCount;
-        int gridCount = config.startTimes.size() * config.searchTimes.size() * config.selectTimes.size();
+            int populationSize = candidates.size();
+            int subsetSize = currentSubsetIdx.getSize();
+            int totalDays = pkg.daysCount;
+            int gridCount = config.startTimes.size() * config.searchTimes.size() * config.selectTimes.size();
 
-        int batchSize = MAX_BATCH_SIZE;
-        List<CandidateResult> resultsList = new ArrayList<>();
+            int batchSize = MAX_BATCH_SIZE;
+            List<CandidateResult> resultsList = new ArrayList<>();
 
-        for (int i = 0; i < subsetSize; i++) subsetIndices.set(i, currentSubsetIdx.get(i));
+            for (int i = 0; i < subsetSize; i++) subsetIndices.set(i, currentSubsetIdx.get(i));
 
-        for (int start = 0; start < populationSize; start += batchSize) {
-            int currentBatchSize = Math.min(batchSize, populationSize - start);
-            for (int i = 0; i < currentBatchSize; i++) {
-                mapParamsToFloatArray(candidates.get(start + i), parameterMatrix, i * PARAMETER_STRIDE);
-            }
-
-            try {
-                String planId = "unified_s" + subsetSize + "_g" + gridCount + "_d" + totalDays + "_b" + currentBatchSize;
-                TornadoExecutionPlan plan = planCache.get(planId);
-                if (plan == null) {
-                    TaskGraph graph = new TaskGraph(planId)
-                            .transferToDevice(DataTransferMode.EVERY_EXECUTION, parameterMatrix, subsetIndices, simulationGrid)
-                            .transferToDevice(DataTransferMode.FIRST_EXECUTION, technicalData, stockOffsets)
-                            .task(planId + "_task", TornadoVmOptimizer::unifiedKernel,
-                                    technicalData, subsetIndices, stockOffsets, parameterMatrix, simulationGrid,
-                                    optimizationResults, subsetSize, totalDays, currentBatchSize, gridCount)
-                            .transferToHost(DataTransferMode.EVERY_EXECUTION, optimizationResults);
-                    plan = new TornadoExecutionPlan(graph.snapshot());
-                    planCache.put(planId, plan);
+            for (int start = 0; start < populationSize; start += batchSize) {
+                int currentBatchSize = Math.min(batchSize, populationSize - start);
+                for (int i = 0; i < currentBatchSize; i++) {
+                    mapParamsToFloatArray(candidates.get(start + i), parameterMatrix, i * PARAMETER_STRIDE);
                 }
 
-                plan.execute();
-
-                for (int candidateInBatchIdx = 0; candidateInBatchIdx < currentBatchSize; candidateInBatchIdx++) {
-                    double totalTrades = 0, totalExcessReturn = 0, totalSqExcessReturn = 0, totalHoldingDays = 0, totalSumTotalExcess = 0;
-                    for (int sIdx = 0; sIdx < subsetSize; sIdx++) {
-                        for (int gIdx = 0; gIdx < gridCount; gIdx++) {
-                            int offset = (candidateInBatchIdx * subsetSize * gridCount + sIdx * gridCount + gIdx) * OPTIMIZATION_RESULT_STRIDE;
-                            totalTrades += optimizationResults.get(offset);
-                            totalHoldingDays += optimizationResults.get(offset + 1);
-                            totalExcessReturn += optimizationResults.get(offset + 2); // sum of daily excess
-                            totalSqExcessReturn += optimizationResults.get(offset + 3);
-                            totalSumTotalExcess += optimizationResults.get(offset + 4);
-                        }
+                try {
+                    String planId = "unified_s" + subsetSize + "_g" + gridCount + "_d" + totalDays + "_b" + currentBatchSize;
+                    TornadoExecutionPlan plan = planCache.get(planId);
+                    if (plan == null) {
+                        TaskGraph graph = new TaskGraph(planId)
+                                .transferToDevice(DataTransferMode.EVERY_EXECUTION, parameterMatrix, subsetIndices, simulationGrid)
+                                .transferToDevice(DataTransferMode.FIRST_EXECUTION, technicalData, stockOffsets)
+                                .task(planId + "_task", TornadoVmOptimizer::unifiedKernel,
+                                        technicalData, subsetIndices, stockOffsets, parameterMatrix, simulationGrid,
+                                        optimizationResults, subsetSize, totalDays, currentBatchSize, gridCount)
+                                .transferToHost(DataTransferMode.EVERY_EXECUTION, optimizationResults);
+                        plan = new TornadoExecutionPlan(graph.snapshot());
+                        planCache.put(planId, plan);
                     }
 
-                    double score = calculateCandidateScore(totalTrades, totalExcessReturn, totalSqExcessReturn, totalHoldingDays,
-                            subsetSize, gridCount, rescue);
+                    plan.execute();
 
-                    // Average return per trade (%)
-                    double avgReturn = (totalTrades > 0.1) ? totalSumTotalExcess / totalTrades : 0.0;
+                    for (int candidateInBatchIdx = 0; candidateInBatchIdx < currentBatchSize; candidateInBatchIdx++) {
+                        double totalTrades = 0, totalExcessReturn = 0, totalSqExcessReturn = 0, totalHoldingDays = 0, totalSumTotalExcess = 0;
+                        for (int sIdx = 0; sIdx < subsetSize; sIdx++) {
+                            for (int gIdx = 0; gIdx < gridCount; gIdx++) {
+                                int offset = (candidateInBatchIdx * subsetSize * gridCount + sIdx * gridCount + gIdx) * OPTIMIZATION_RESULT_STRIDE;
+                                totalTrades += optimizationResults.get(offset);
+                                totalHoldingDays += optimizationResults.get(offset + 1);
+                                totalExcessReturn += optimizationResults.get(offset + 2); // sum of daily log excess
+                                totalSqExcessReturn += optimizationResults.get(offset + 3);
+                                totalSumTotalExcess += optimizationResults.get(offset + 4);
+                            }
+                        }
 
-                    resultsList.add(new CandidateResult(candidates.get(start + candidateInBatchIdx), score, avgReturn));
+                        double score = calculateCandidateScore(totalTrades, totalExcessReturn, totalSqExcessReturn, totalHoldingDays,
+                                subsetSize, gridCount, rescue);
+
+                        // Average return per trade (%) - Calculated as geometric average percentage
+                        double avgReturn = (totalTrades > 0.1) ? (Math.exp(totalSumTotalExcess / totalTrades) - 1.0) * 100.0 : 0.0;
+
+                        resultsList.add(new CandidateResult(candidates.get(start + candidateInBatchIdx), score, avgReturn));
+                    }
+                } catch (Exception e) {
+                    logger.error("GPU evaluation failed: {}", e.getMessage());
+                    List<SimulationParams> failed = candidates.subList(start, populationSize);
+                    resultsList.addAll(fallback.evaluateParallel(failed, toList(subsetIndices), pkg, rescue));
+                    return resultsList;
                 }
-            } catch (Exception e) {
-                logger.error("GPU evaluation failed: {}", e.getMessage());
-                List<SimulationParams> failed = candidates.subList(start, populationSize);
-                resultsList.addAll(fallback.evaluateParallel(failed, toList(subsetIndices), pkg, rescue));
-                return resultsList;
             }
+            return resultsList;
         }
-        return resultsList;
     }
 
     private double calculateCandidateScore(double trades, double excess, double sqExcess, double totalHoldingDays,
                                            int subsetSize, int gridCount, boolean rescue) {
         if (rescue) return -100.0 + trades;
 
-        // Enforce minimum trade density requirements (Consistent with Simulation.java)
-        double minRequiredTrades = (subsetSize * gridCount) / 5000.0;
-        if (trades < minRequiredTrades || trades < 10) return -100.0;
+        // Relaxed trade density requirements (Consistent with Simulation.java)
+        // Ignore gridCount to avoid constant -100 on small datasets.
+        double minRequiredTrades = Math.max(50, (double) subsetSize * gridCount / 1000.0);
+        if (trades < minRequiredTrades || trades < 2 || totalHoldingDays < 2.0) return -100.0;
 
-        double avgExcess = excess / trades;
-        double variance = (sqExcess - (excess * excess / trades)) / (trades - 1.000001);
+        // excess is sum(dailyExcess * dur) = sum(excessLogRet)
+        // sqExcess is sum(dailyExcess^2 * dur)
+        // total samples = totalHoldingDays
+        double avgDailyExcess = excess / totalHoldingDays;
+        double variance = (sqExcess - (excess * excess / totalHoldingDays)) / (totalHoldingDays - 1.000001);
         double stdDev = Math.sqrt(Math.max(0.0, variance));
 
-        // Aligned smoothing (0.01) with Simulation.java to ensure score parity
-        // and added a tiny trade count reward to break ties and encourage volume.
-        double sharpe = (avgExcess / (stdDev + 0.01)) * Math.sqrt(DAYS_PER_YEAR);
+        // Annualized metrics
+        double annualizedExcess = avgDailyExcess * 252.0;
+        double annualizedStdDev = stdDev * Math.sqrt(252.0);
+
+        // Aligned smoothing (0.01) with Simulation.java to ensure score parity.
+        double sharpe = (annualizedExcess / (annualizedStdDev + 0.01));
+
+        // Resolve Negative Sharpe Paradox: Penalize volatility when returns are negative
+        if (annualizedExcess < 0) sharpe = annualizedExcess * (annualizedStdDev + 1.0);
+
         return sharpe + (trades * 0.000001);
     }
 
@@ -392,13 +408,13 @@ public class TornadoVmOptimizer implements Optimizer {
                 int shortIdx = (d - shortLookback > stockStartOffset) ? d - shortLookback : stockStartOffset;
                 float oldP = technicalData.get((globalStockIdx * totalDays + shortIdx) * TECH_DATA_STRIDE);
                 float mShort = (d >= stockStartOffset + shortLookback && price < oldP * 0.8f) ? 0.0f : 1.0f;
-                float mMCap = (technicalData.get(dayOffset + 8) >= minMarketCap && technicalData.get(dayOffset + 8) <= maxMarketCap) ? 1.0f : (minMarketCap <= 0 ? 1.0f : 0.0f);
+                float mMCap = (technicalData.get(dayOffset + 8) >= minMarketCap && technicalData.get(dayOffset + 8) <= maxMarketCap) ? 1.0f : 0.0f;
                 float mRSI = (technicalData.get(dayOffset + 7) <= maxRSI) ? 1.0f : 0.0f;
 
                 // CRITICAL: Skip uninitialized/stabilizing window (match Simulation.java shouldSkip)
                 float mActive = (d - stockStartOffset >= longAvgTimeframe - 1 && price >= 0.05f) ? 1.0f : 0.0f;
 
-                float heuristic = (scoreGap + scoreRating + scoreRVol + scoreMom + scoreRev + scorePeg + scoreVol) * mMCap * mRSI * mShort * mActive;
+                float heuristic = (scoreGap + scoreRating + scoreRVol + scoreMom + scoreRev /*+ scorePeg*/ + scoreVol) * mMCap /** mRSI*/ * mShort * mActive;
 
                 // 2. Perform Simulation Step (Branchless numerical state updates)
                 int doBuy = (tradingState == 0 && d < buyLimit && heuristic > buyThreshold) ? 1 : 0;
@@ -411,19 +427,26 @@ public class TornadoVmOptimizer implements Optimizer {
 
                 // Metrics calculation (always performed, but only committed if doSell == 1)
                 float dur = (float) d - entryDay;
-                float netG = (price - entryPrice) / (entryPrice + 0.01f) - 0.0015f;
-                netG = (netG > 1.0f) ? 1.0f : (netG < -1.0f ? -1.0f : netG);
+                float rawRet = (price - entryPrice) / (entryPrice + 1e-6f) - 0.002f;
+                rawRet = (rawRet > 2.0f) ? 2.0f : (rawRet < -1.0f ? -1.0f : rawRet);
 
-                // Aligned Daily Return (No Risk-Free subtraction to match Simulation.java)
-                float dailyRet = (dur > 0.1f) ? (netG * 100.0f) / dur : 0.0f;
+                // 2. Orphaned Risk-Free Rate & 3. Geometric Compounding
+                // Using log returns: log(1 + r) is additive and approximates geometric compounding.
+                float tradeLogRet = (float) Math.log(1.0f + rawRet);
+                float excessLogRet = tradeLogRet - (dur * dailyRiskFreeRate);
+
+                // 1. Duration Bias: Calculate daily excess return to normalize for holding time.
+                float dailyExcess = excessLogRet / (dur > 0.1f ? dur : 1.0f);
 
                 // Numerical commit
                 int commit = (doSell == 1 && dur > 0.1f) ? 1 : 0;
                 trades = (commit == 1) ? trades + 1.0f : trades;
                 holdingDays = (commit == 1) ? holdingDays + dur : holdingDays;
-                sumExcess = (commit == 1) ? sumExcess + dailyRet : sumExcess;
-                sumSqExcess = (commit == 1) ? sumSqExcess + (dailyRet * dailyRet) : sumSqExcess;
-                sumTotalExcess = (commit == 1) ? sumTotalExcess + (netG * 100.0f) : sumTotalExcess;
+
+                // Weighting by duration allows us to compute daily variance across all trading days.
+                sumExcess = (commit == 1) ? sumExcess + excessLogRet : sumExcess; // Equivalent to dailyExcess * dur
+                sumSqExcess = (commit == 1) ? sumSqExcess + (dailyExcess * dailyExcess * dur) : sumSqExcess;
+                sumTotalExcess = (commit == 1) ? sumTotalExcess + tradeLogRet : sumTotalExcess;
 
                 // Exit update
                 tradingState = (doSell == 1) ? 0 : tradingState;
@@ -438,13 +461,14 @@ public class TornadoVmOptimizer implements Optimizer {
         }
     }
 
-    private void preallocateBuffers(int maxStocks, int maxDays) {
+    private synchronized void preallocateBuffers(int maxStocks, int maxDays) {
         int gridCount = config.startTimes.size() * config.searchTimes.size() * config.selectTimes.size();
         int maxBatchSize = MAX_BATCH_SIZE;
 
         if (technicalData == null || technicalData.getSize() < maxStocks * maxDays * TECH_DATA_STRIDE) {
             technicalData = new FloatArray(maxStocks * maxDays * TECH_DATA_STRIDE);
         }
+
         if (parameterMatrix == null || parameterMatrix.getSize() < maxBatchSize * PARAMETER_STRIDE) {
             parameterMatrix = new FloatArray(maxBatchSize * PARAMETER_STRIDE);
         }

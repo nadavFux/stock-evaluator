@@ -12,6 +12,12 @@ import java.util.List;
 import static org.junit.jupiter.api.Assertions.*;
 
 import uk.ac.manchester.tornado.api.types.arrays.FloatArray;
+import uk.ac.manchester.tornado.api.types.arrays.IntArray;
+
+import java.lang.reflect.Field;
+import java.lang.reflect.Method;
+import java.util.ArrayList;
+import java.util.List;
 
 public class TornadoVmOptimizerTest {
 
@@ -40,6 +46,15 @@ public class TornadoVmOptimizerTest {
         config.startTimes = List.of(20);
         config.searchTimes = List.of(20);
         config.selectTimes = List.of(1);
+        
+        // Ensure weights are initialized to avoid NaNs in score calculation
+        config.movingAvgGapWeight = new ArrayList<>(List.of(0.2));
+        config.reversionToMeanWeight = new ArrayList<>(List.of(0.15));
+        config.ratingWeight = new ArrayList<>(List.of(0.2));
+        config.upwardIncRateWeight = new ArrayList<>(List.of(0.15));
+        config.rvolWeight = new ArrayList<>(List.of(0.1));
+        config.pegWeight = new ArrayList<>(List.of(0.1));
+        config.volatilityCompressionWeight = new ArrayList<>(List.of(0.1));
     }
 
     @Test
@@ -92,7 +107,54 @@ public class TornadoVmOptimizerTest {
         assertTrue(techData.get(0) > 0); // Price should be mapped
     }
 
+    @Test
+    public void testEvaluateGpu2D_Component() throws Exception {
+        TornadoVmOptimizer optimizer = new TornadoVmOptimizer(config);
+        List<StockGraphState> stocks = generateSyntheticStocks(2, 150); // Increased size to avoid JIT stall
+        SimulationDataPackage pkg = new SimulationDataPackage(stocks);
+
+        // Manually trigger allocation for evaluation
+        Method allocMethod = TornadoVmOptimizer.class.getDeclaredMethod("preallocateBuffers", int.class, int.class);
+        allocMethod.setAccessible(true);
+        allocMethod.invoke(optimizer, pkg.stockCount, pkg.daysCount);
+
+        Method flatMethod = TornadoVmOptimizer.class.getDeclaredMethod("flattenToTechData", SimulationDataPackage.class);
+        flatMethod.setAccessible(true);
+        flatMethod.invoke(optimizer, pkg);
+
+        SimulationParams params = new SimulationParams(
+                0.95, 0.9, 1.1, 50, 1.05, 20, 10, 70, 0, 20, 0, 100, 1, 5, 1000000000, 0.0, 0.05,
+                0.2, 0.15, 0.2, 0.15, 0.1, 0.1, 0.1
+        );
+
+        IntArray subset = new IntArray(pkg.stockCount);
+        for (int i = 0; i < pkg.stockCount; i++) subset.set(i, i);
+
+        List<Optimizer.CandidateResult> results = optimizer.evaluateGpu2D(List.of(params), subset, pkg, false);
+
+        assertNotNull(results);
+        assertEquals(1, results.size());
+        assertNotNull(results.get(0).params());
+    }
+
+    @Test
+    public void testFullOptimizationPipeline_E2E() {
+        // Use a tiny config to make it run extremely fast
+        config.centersCount = 1;
+        config.populationSize = 2;
+        config.generations = 1;
+
+        TornadoVmOptimizer optimizer = new TornadoVmOptimizer(config);
+        List<StockGraphState> stocks = generateSyntheticStocks(2, 150);
+
+        // E2E triggers entire pipeline
+        SimulationParams resultParams = optimizer.optimize(stocks);
+        assertNotNull(resultParams);
+        assertTrue(resultParams.sellCutOffPerc() > 0);
+    }
+
     public static List<StockGraphState> generateSyntheticStocks(int count, int days) {
+        java.util.Random rand = new java.util.Random(42); // Fixed seed
         List<StockGraphState> stocks = new ArrayList<>();
         for (int i = 0; i < count; i++) {
             String ticker = "TEST" + i;
@@ -105,8 +167,8 @@ public class TornadoVmOptimizerTest {
 
             double currentPrice = 100.0;
             for (int d = 0; d < days; d++) {
-                currentPrice *= (1.0 + (Math.random() * 0.002 - 0.001));
-                if (d > days / 2 && d < days / 2 + 10) currentPrice = 50.0; // Artificial dip
+                currentPrice *= (1.0 + (rand.nextDouble() * 0.002 - 0.001));
+                if (d > days / 2 && d < days / 2 + 5) currentPrice = 50.0; // Artificial dip
                 prices.add(currentPrice);
                 volumes.add(1000000.0);
                 ratings.add(4.5);

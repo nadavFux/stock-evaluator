@@ -39,14 +39,21 @@ import java.util.Map;
 
 public class MLModelService {
     private static final Logger logger = LoggerFactory.getLogger(MLModelService.class);
-    private final Model model;
+    private Model model;
+    private boolean isInitialized = false;
     private final List<float[][]> sequences = new ArrayList<>();
     private final List<Float> labels = new ArrayList<>();
 
     public MLModelService() {
-        NDManager manager = NDManager.newBaseManager(Device.cpu());
-        this.model = Model.newInstance("stock-lstm", Device.cpu());
-        this.model.setBlock(buildLstmBlock());
+    }
+
+    private synchronized void initModelIfNeeded() {
+        if (!isInitialized) {
+            this.model = Model.newInstance("stock-lstm", Device.cpu());
+            this.model.setBlock(buildLstmBlock());
+            isInitialized = true;
+            logger.info("ML Model initialized (lazy).");
+        }
     }
 
     private Block buildLstmBlock() {
@@ -79,6 +86,7 @@ public class MLModelService {
     }
 
     public void train() {
+        initModelIfNeeded();
         if (sequences.size() < 100) {
             logger.warn("Not enough samples to train ML model (need at least 100, got {})", sequences.size());
             return;
@@ -137,7 +145,7 @@ public class MLModelService {
     }
 
     public double[] predict(float[][] sequence) {
-        if (model == null) return new double[]{0, 0, 0};
+        initModelIfNeeded();
         try (NDManager manager = NDManager.newBaseManager(Device.cpu());
              Predictor<NDList, NDList> predictor = model.newPredictor(new Translator<NDList, NDList>() {
                  @Override
@@ -185,6 +193,7 @@ public class MLModelService {
     }
 
     public void saveModel(String dirPath) {
+        initModelIfNeeded();
         try {
             java.nio.file.Path modelDir = Paths.get(dirPath);
             if (!Files.exists(modelDir)) {
@@ -198,6 +207,7 @@ public class MLModelService {
     }
 
     public void loadModel(String dirPath) {
+        initModelIfNeeded();
         try {
             java.nio.file.Path modelDir = Paths.get(dirPath);
             if (Files.exists(modelDir.resolve("stock-lstm-0000.params"))) { // DJL default suffix
