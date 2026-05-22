@@ -15,6 +15,7 @@ import uk.ac.manchester.tornado.api.types.arrays.IntArray;
 
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.stream.IntStream;
 
 /**
  * High-Performance GPU Optimizer using TornadoVM 4.0.0.
@@ -34,7 +35,7 @@ public class TornadoVmOptimizer implements Optimizer {
     private static final int PARAMETER_STRIDE = 24;
     private static final int OPTIMIZATION_RESULT_STRIDE = 5;
     private static final int GRID_TASK_STRIDE = 3;
-    private static final int MAX_BATCH_SIZE = 20;
+    private static final int MAX_BATCH_SIZE = 100;
 
     // Simulation Constants
     private static final int DAYS_PER_YEAR = 252;
@@ -47,7 +48,7 @@ public class TornadoVmOptimizer implements Optimizer {
                 isAvailable = true;
             }
         } catch (Throwable t) {
-            logger.error("TornadoVM initialization failed: {}", t.getMessage());
+            logger.error("TornadoVM initialization failed", t);
         }
     }
 
@@ -93,9 +94,10 @@ public class TornadoVmOptimizer implements Optimizer {
             flattenToTechData(dataPkg);
 
             // Initialize multiple starting points (centers) for the search
-            int centersCount = (config.centersCount != null) ? config.centersCount : 6;
-            int populationSize = (config.populationSize != null) ? config.populationSize : 500;
-            int totalGenerations = (config.generations != null) ? config.generations : 10;
+            int centersCount = (config.centersCount != null) ? config.centersCount : 4;
+            int populationSize = (config.populationSize != null) ? config.populationSize : 800;
+            int totalGenerations = (config.generations != null) ? config.generations : 8;
+
 
             List<CandidateResult> centers = new ArrayList<>();
             SimulationParams configCenter = centerParamsFromConfig();
@@ -129,7 +131,7 @@ public class TornadoVmOptimizer implements Optimizer {
                     List<CandidateResult> discovery = evaluateGpu2D(population, gpuSubset, dataPkg, false);
                     List<SimulationParams> elites = discovery.stream()
                             .sorted(Comparator.comparingDouble(CandidateResult::score).reversed())
-                            .limit(10)
+                            .limit(100)
                             .map(CandidateResult::params)
                             .toList();
 
@@ -149,7 +151,7 @@ public class TornadoVmOptimizer implements Optimizer {
                     }
 
                 }
-                radius *= 0.9;
+                radius *= 0.85;
             }
 
             // Final selection and ML sample collection
@@ -213,7 +215,8 @@ public class TornadoVmOptimizer implements Optimizer {
 
                     plan.execute();
 
-                    for (int candidateInBatchIdx = 0; candidateInBatchIdx < currentBatchSize; candidateInBatchIdx++) {
+                    int finalStart = start;
+                    IntStream.range(0, currentBatchSize).parallel().forEach(candidateInBatchIdx -> {
                         double totalTrades = 0, totalExcessReturn = 0, totalSqExcessReturn = 0, totalHoldingDays = 0, totalSumTotalExcess = 0;
                         for (int sIdx = 0; sIdx < subsetSize; sIdx++) {
                             for (int gIdx = 0; gIdx < gridCount; gIdx++) {
@@ -232,8 +235,8 @@ public class TornadoVmOptimizer implements Optimizer {
                         // Average return per trade (%) - Calculated as geometric average percentage
                         double avgReturn = (totalTrades > 0.1) ? (Math.exp(totalSumTotalExcess / totalTrades) - 1.0) * 100.0 : 0.0;
 
-                        resultsList.add(new CandidateResult(candidates.get(start + candidateInBatchIdx), score, avgReturn));
-                    }
+                        resultsList.add(new CandidateResult(candidates.get(finalStart + candidateInBatchIdx), score, avgReturn));
+                    });
                 } catch (Exception e) {
                     logger.error("GPU evaluation failed: {}", e.getMessage());
                     List<SimulationParams> failed = candidates.subList(start, populationSize);
@@ -386,8 +389,8 @@ public class TornadoVmOptimizer implements Optimizer {
                 // Reversion Score (with BB%P multiplier)
                 float bbP = technicalData.get(dayOffset + 11);
                 float bollingerFactor = (bbP < 0.2f) ? (1.0f - bbP) : 0.5f;
-                float meanDev = (gap - 1.0f);
-                meanDev = (meanDev < 0 ? -meanDev : meanDev) / 0.20f;
+                float meanDev = (gap < 1.0f) ? (1.0f - gap) : 0.0f;
+                meanDev = meanDev / 0.20f;
                 float scoreRev = (meanDev < 0 ? 0 : (meanDev > 1 ? 1 : meanDev)) * bollingerFactor * (weightRev / totalWeight);
 
                 // PEG Score
@@ -414,7 +417,7 @@ public class TornadoVmOptimizer implements Optimizer {
                 // CRITICAL: Skip uninitialized/stabilizing window (match Simulation.java shouldSkip)
                 float mActive = (d - stockStartOffset >= longAvgTimeframe - 1 && price >= 0.05f) ? 1.0f : 0.0f;
 
-                float heuristic = (scoreGap + scoreRating + scoreRVol + scoreMom + scoreRev /*+ scorePeg*/ + scoreVol) * mMCap /** mRSI*/ * mShort * mActive;
+                float heuristic = (scoreGap + scoreRating + scoreRVol + scoreMom + scoreRev /*+ scorePeg*/ + scoreVol) * mMCap /* mRSI*/ * mShort * mActive;
 
                 // 2. Perform Simulation Step (Branchless numerical state updates)
                 int doBuy = (tradingState == 0 && d < buyLimit && heuristic > buyThreshold) ? 1 : 0;
@@ -427,13 +430,14 @@ public class TornadoVmOptimizer implements Optimizer {
 
                 // Metrics calculation (always performed, but only committed if doSell == 1)
                 float dur = (float) d - entryDay;
-                float rawRet = (price - entryPrice) / (entryPrice + 1e-6f) - 0.002f;
+                float rawRet = (price - entryPrice) / (entryPrice + 1e-6f) - 0.003f;
                 rawRet = (rawRet > 2.0f) ? 2.0f : (rawRet < -1.0f ? -1.0f : rawRet);
 
                 // 2. Orphaned Risk-Free Rate & 3. Geometric Compounding
                 // Using log returns: log(1 + r) is additive and approximates geometric compounding.
                 float tradeLogRet = (float) Math.log(1.0f + rawRet);
-                float excessLogRet = tradeLogRet - (dur * dailyRiskFreeRate);
+                float logDailyRiskFree = (float) Math.log(1.0 + dailyRiskFreeRate);
+                float excessLogRet = tradeLogRet - (dur * logDailyRiskFree);
 
                 // 1. Duration Bias: Calculate daily excess return to normalize for holding time.
                 float dailyExcess = excessLogRet / (dur > 0.1f ? dur : 1.0f);
