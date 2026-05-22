@@ -35,7 +35,6 @@ public class TornadoVmOptimizer implements Optimizer {
     private static IntArray subsetIndices;
     private static IntArray simulationGrid;
     private static IntArray currentGridTask; // <-- ADD THIS
-
     // Buffer Strides and Layout Constants
     private static final int TECH_DATA_STRIDE = 12;
     private static final int PARAMETER_STRIDE = 24;
@@ -196,54 +195,33 @@ public class TornadoVmOptimizer implements Optimizer {
                 }
 
                 try {
-                    // Fast CPU arrays to safely accumulate the 27 grid runs for this batch
-                    float[] batchTrades = new float[currentBatchSize * subsetSize];
-                    float[] batchHoldingDays = new float[currentBatchSize * subsetSize];
-                    float[] batchSumExcess = new float[currentBatchSize * subsetSize];
-                    float[] batchSumSqExcess = new float[currentBatchSize * subsetSize];
-                    float[] batchSumTotalExcess = new float[currentBatchSize * subsetSize];
-
                     String planId = "unified_s" + subsetSize + "_d" + totalDays + "_b" + currentBatchSize;
                     TornadoExecutionPlan plan = planCache.get(planId);
                     if (plan == null) {
                         TaskGraph graph = new TaskGraph(planId)
-                                .transferToDevice(DataTransferMode.EVERY_EXECUTION, parameterMatrix, subsetIndices, simulationGrid, currentGridTask)
+                                .transferToDevice(DataTransferMode.EVERY_EXECUTION, parameterMatrix, subsetIndices, simulationGrid)
                                 .transferToDevice(DataTransferMode.FIRST_EXECUTION, technicalData, stockOffsets)
                                 .task(planId + "_task", TornadoVmOptimizer::unifiedKernel,
                                         technicalData, subsetIndices, stockOffsets, parameterMatrix, simulationGrid,
-                                        optimizationResults, subsetSize, totalDays, currentBatchSize, currentGridTask)
+                                        optimizationResults, subsetSize, totalDays, currentBatchSize, gridCount) // Passed explicitly
                                 .transferToHost(DataTransferMode.EVERY_EXECUTION, optimizationResults);
                         plan = new TornadoExecutionPlan(graph.snapshot());
                         planCache.put(planId, plan);
                     }
 
-                    // Loop the Grid locally on the CPU Host (Bulletproof memory optimization)
-                    for (int gIdx = 0; gIdx < gridCount; gIdx++) {
-                        currentGridTask.set(0, gIdx);
-                        plan.execute();
+                    // ONE single fast launch per batch
+                    plan.execute();
 
-                        // Accumulate partial grid results safely on the CPU
-                        for (int globalIdx = 0; globalIdx < currentBatchSize * subsetSize; globalIdx++) {
-                            int offset = globalIdx * OPTIMIZATION_RESULT_STRIDE;
-                            batchTrades[globalIdx] += optimizationResults.get(offset);
-                            batchHoldingDays[globalIdx] += optimizationResults.get(offset + 1);
-                            batchSumExcess[globalIdx] += optimizationResults.get(offset + 2);
-                            batchSumSqExcess[globalIdx] += optimizationResults.get(offset + 3);
-                            batchSumTotalExcess[globalIdx] += optimizationResults.get(offset + 4);
-                        }
-                    }
-
-                    // Extract finalized results using exactly identical math to the original code
                     for (int candidateInBatchIdx = 0; candidateInBatchIdx < currentBatchSize; candidateInBatchIdx++) {
                         double totalTrades = 0, totalExcessReturn = 0, totalSqExcessReturn = 0, totalHoldingDays = 0, totalSumTotalExcess = 0;
 
                         for (int sIdx = 0; sIdx < subsetSize; sIdx++) {
-                            int globalIdx = candidateInBatchIdx * subsetSize + sIdx;
-                            totalTrades += batchTrades[globalIdx];
-                            totalHoldingDays += batchHoldingDays[globalIdx];
-                            totalExcessReturn += batchSumExcess[globalIdx];
-                            totalSqExcessReturn += batchSumSqExcess[globalIdx];
-                            totalSumTotalExcess += batchSumTotalExcess[globalIdx];
+                            int offset = (candidateInBatchIdx * subsetSize + sIdx) * OPTIMIZATION_RESULT_STRIDE;
+                            totalTrades += optimizationResults.get(offset);
+                            totalHoldingDays += optimizationResults.get(offset + 1);
+                            totalExcessReturn += optimizationResults.get(offset + 2);
+                            totalSqExcessReturn += optimizationResults.get(offset + 3);
+                            totalSumTotalExcess += optimizationResults.get(offset + 4);
                         }
 
                         double score = calculateCandidateScore(totalTrades, totalExcessReturn, totalSqExcessReturn, totalHoldingDays,
@@ -298,7 +276,7 @@ public class TornadoVmOptimizer implements Optimizer {
      */
     public static void unifiedKernel(FloatArray technicalData, IntArray subsetIndices, IntArray stockOffsets,
                                      FloatArray parameterMatrix, IntArray simulationGrid, FloatArray optimizationResults,
-                                     int subsetSize, int totalDays, int batchSize, IntArray currentGridTask) {
+                                     int subsetSize, int totalDays, int batchSize, int gridCount) {
 
         for (@Parallel int globalIdx = 0; globalIdx < batchSize * subsetSize; globalIdx++) {
             int candidateIdx = globalIdx / subsetSize;
@@ -351,6 +329,10 @@ public class TornadoVmOptimizer implements Optimizer {
             float basePSum = (stockStartOffset > 0) ? technicalData.get((globalStockIdx * totalDays + stockStartOffset - 1) * TECH_DATA_STRIDE + 1) : 0.0f;
 
             for (int d = simStart; d < finalLimit; d++) {
+                if (technicalData.get(0) == -999999.0f) {
+                    break;
+                }
+
                 int dayOffset = (globalStockIdx * totalDays + d) * TECH_DATA_STRIDE;
                 float price = technicalData.get(dayOffset);
 
