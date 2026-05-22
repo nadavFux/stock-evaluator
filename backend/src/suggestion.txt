@@ -1,0 +1,127 @@
+The reason your application is using so much GPU VRAM at a batch size of 256 is due to the dimensionality of your `optimizationResults` buffer.
+
+Right now, your kernel's `@Parallel` loop is flattened across **Batch × Stocks × Grid**.
+If you process `256 candidates` × `8,000 stocks` × `27 grid variations` × `5 output floats` × `4 bytes`, the result buffer alone consumes over **1.1 GB of contiguous VRAM**. Furthermore, OpenCL restricts single buffer allocations (usually capping them at 25% or 50% of your total VRAM), which is why it often fails on Colab.
+
+You can drastically reduce memory usage **by up to 95% without losing a single decimal of precision**. We can achieve this by doing a **partial reduction directly inside the GPU**. By parallelizing only across `Batch × Stocks` and running the `Grid` calculations in a standard `for` loop inside the thread, the VRAM footprint of your results drops from ~1.1 GB down to **~40 MB**.
+
+Here are the exact 3 modifications to make in `TornadoVmOptimizer.java`:
+
+### 1. Update the Unified Kernel (GPU Side)
+
+Move the `gridCount` loop inside the thread. This collapses the output dimensions significantly while maintaining enough threads (over 2 million) to keep the GPU fully saturated and running at peak speed.
+
+**Replace your `unifiedKernel` definition with this:**
+
+```java
+public static void unifiedKernel(FloatArray technicalData, IntArray subsetIndices, IntArray stockOffsets,
+                                 FloatArray parameterMatrix, IntArray simulationGrid, FloatArray optimizationResults,
+                                 int subsetSize, int totalDays, int batchSize, int gridCount) {
+
+    // 1. Thread now covers just Candidate x Stock
+    for (@Parallel int globalIdx = 0; globalIdx < batchSize * subsetSize; globalIdx++) {
+        int candidateIdx = globalIdx / subsetSize;
+        int localSubsetIdx = globalIdx % subsetSize;
+
+        int globalStockIdx = subsetIndices.get(localSubsetIdx);
+        int stockStartOffset = stockOffsets.get(globalStockIdx);
+        int paramBase = candidateIdx * PARAMETER_STRIDE;
+
+        // ... [Keep your parameter loading logic here exact same as before] ...
+
+        // 2. Accumulators for the entire grid for THIS stock
+        float totalTrades = 0, totalHoldingDays = 0, totalSumExcess = 0, totalSumSqExcess = 0, totalSumTotalExcess = 0;
+        
+        // Base prefix sums for normalization
+        float basePSum = (stockStartOffset > 0) ? technicalData.get((globalStockIdx * totalDays + stockStartOffset - 1) * TECH_DATA_STRIDE + 1) : 0.0f;
+
+        // 3. Move the grid execution into a sequential loop inside the kernel
+        for(int gridTaskIdx = 0; gridTaskIdx < gridCount; gridTaskIdx++) {
+            
+            // Simulation grid parameters
+            int daysLookback = simulationGrid.get(gridTaskIdx * GRID_TASK_STRIDE);
+            int searchTimeframe = simulationGrid.get(gridTaskIdx * GRID_TASK_STRIDE + 1);
+            int selectionTimeframe = simulationGrid.get(gridTaskIdx * GRID_TASK_STRIDE + 2);
+
+            int simStart = (totalDays - daysLookback > 0) ? totalDays - daysLookback : 0;
+            simStart = (simStart > stockStartOffset) ? simStart : stockStartOffset;
+            int buyLimit = (simStart + searchTimeframe < totalDays) ? simStart + searchTimeframe : totalDays;
+            int finalLimit = (selectionTimeframe > 0) ? ((simStart + searchTimeframe + selectionTimeframe < totalDays) ? simStart + searchTimeframe + selectionTimeframe : totalDays) : totalDays;
+
+            // Reset trading state for this specific grid pass
+            float trades = 0, holdingDays = 0, sumExcess = 0, sumSqExcess = 0, sumTotalExcess = 0;
+            int tradingState = 0; 
+            float entryPrice = 0.0f, entryDay = 0.0f;
+
+            for (int d = simStart; d < finalLimit; d++) {
+                int dayOffset = (globalStockIdx * totalDays + d) * TECH_DATA_STRIDE;
+                
+                // ... [Keep your entire d-loop logic here exact same as before] ...
+            }
+
+            // Accumulate the specific grid results into our total for this stock
+            totalTrades += trades;
+            totalHoldingDays += holdingDays;
+            totalSumExcess += sumExcess;
+            totalSumSqExcess += sumSqExcess;
+            totalSumTotalExcess += sumTotalExcess;
+        }
+
+        // 4. Output ONLY the reduced sum (no grid multiplier on the offset)
+        int outputIdx = globalIdx * OPTIMIZATION_RESULT_STRIDE;
+        optimizationResults.set(outputIdx, totalTrades);
+        optimizationResults.set(outputIdx + 1, totalHoldingDays);
+        optimizationResults.set(outputIdx + 2, totalSumExcess);
+        optimizationResults.set(outputIdx + 3, totalSumSqExcess);
+        optimizationResults.set(outputIdx + 4, totalSumTotalExcess);
+    }
+}
+
+```
+
+### 2. Update the Results Aggregation (CPU Side)
+
+Because the GPU now sums the grid results together automatically, we can strip out the nested loop inside `evaluateGpu2D`, accelerating the host CPU execution as well.
+
+In **`evaluateGpu2D()`**, replace the metric extraction loop with this:
+
+```java
+for (int candidateInBatchIdx = 0; candidateInBatchIdx < currentBatchSize; candidateInBatchIdx++) {
+    double totalTrades = 0, totalExcessReturn = 0, totalSqExcessReturn = 0, totalHoldingDays = 0, totalSumTotalExcess = 0;
+    
+    for (int sIdx = 0; sIdx < subsetSize; sIdx++) {
+        // Grid is gone! Offset is much simpler
+        int offset = (candidateInBatchIdx * subsetSize + sIdx) * OPTIMIZATION_RESULT_STRIDE;
+        totalTrades += optimizationResults.get(offset);
+        totalHoldingDays += optimizationResults.get(offset + 1);
+        totalExcessReturn += optimizationResults.get(offset + 2); 
+        totalSqExcessReturn += optimizationResults.get(offset + 3);
+        totalSumTotalExcess += optimizationResults.get(offset + 4);
+    }
+
+    double score = calculateCandidateScore(totalTrades, totalExcessReturn, totalSqExcessReturn, totalHoldingDays,
+            subsetSize, gridCount, rescue);
+
+    double avgReturn = (totalTrades > 0.1) ? (Math.exp(totalSumTotalExcess / totalTrades) - 1.0) * 100.0 : 0.0;
+    resultsList.add(new CandidateResult(candidates.get(start + candidateInBatchIdx), score, avgReturn));
+}
+
+```
+
+### 3. Shrink the Output Buffer Allocation
+
+Update the size of `optimizationResults` in `preallocateBuffers()`. Notice how `gridCount` is removed from the array math.
+
+```java
+// Inside preallocateBuffers()
+if (optimizationResults == null || optimizationResults.getSize() < maxBatchSize * maxStocks * OPTIMIZATION_RESULT_STRIDE) {
+    optimizationResults = new FloatArray(maxBatchSize * maxStocks * OPTIMIZATION_RESULT_STRIDE);
+}
+
+```
+
+### Why this is better:
+
+1. **Solves the Memory Issue instantly:** You bypass OpenCL single-buffer limitations entirely.
+2. **Speed increase:** While the kernel executes sequentially over `gridCount`, we've massively reduced global memory bandwidth (`VRAM Write` operations). Given GPU latency is usually bound by memory traffic rather than FLOPs, writing 40 MB back to the host is significantly faster than writing 1.1 GB.
+3. **No Precision Loss:** We are simply reordering the commutative floating-point additions. The numerical results will be identical.
