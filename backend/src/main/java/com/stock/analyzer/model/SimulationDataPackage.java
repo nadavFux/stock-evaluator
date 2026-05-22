@@ -1,0 +1,178 @@
+package com.stock.analyzer.model;
+
+import java.util.List;
+
+public class SimulationDataPackage {
+    public final double[][] closePrices;
+    public final double[][] volumes;
+    public final double[][] ratings;
+    public final double[][] epss;
+    public final double[][] caps;
+    public final double[][] pricePrefixSum;
+    public final double[][] priceSqPrefixSum;
+    public final double[][] rsi;
+    public final double[][] avgVol30d;
+    public final double[][] macd;
+    public final double[][] atr;
+    public final double[][] bbP;
+    public final String[] tickers;
+    public final String[][] dates;
+    public final int[] offsets;
+    public final int stockCount;
+    public final int daysCount;
+
+    public SimulationDataPackage(List<StockGraphState> stocks) {
+        this.stockCount = stocks.size();
+        int maxDays = 0;
+        for (StockGraphState s : stocks) {
+            maxDays = Math.max(maxDays, s.closePrices().size());
+        }
+        this.daysCount = maxDays;
+        this.tickers = new String[stockCount];
+        this.dates = new String[stockCount][daysCount];
+        this.offsets = new int[stockCount];
+        this.closePrices = new double[stockCount][daysCount];
+        this.volumes = new double[stockCount][daysCount];
+        this.ratings = new double[stockCount][daysCount];
+        this.epss = new double[stockCount][daysCount];
+        this.caps = new double[stockCount][daysCount];
+        this.pricePrefixSum = new double[stockCount][daysCount];
+        this.priceSqPrefixSum = new double[stockCount][daysCount];
+        this.rsi = new double[stockCount][daysCount];
+        this.avgVol30d = new double[stockCount][daysCount];
+        this.macd = new double[stockCount][daysCount];
+        this.atr = new double[stockCount][daysCount];
+        this.bbP = new double[stockCount][daysCount];
+
+        for (int i = 0; i < stockCount; i++) {
+            StockGraphState s = stocks.get(i);
+            tickers[i] = s.stock().ticker_symbol();
+            int currentSize = s.closePrices().size();
+            int offset = daysCount - currentSize;
+            this.offsets[i] = offset;
+            
+            double runningSum = 0;
+            double runningSqSum = 0;
+            double volSum = 0;
+            
+            for (int j = 0; j < offset; j++) {
+                closePrices[i][j] = 0;
+                volumes[i][j] = 0;
+                ratings[i][j] = 0;
+                epss[i][j] = 0;
+                caps[i][j] = 0;
+                dates[i][j] = null;
+                pricePrefixSum[i][j] = 0;
+                priceSqPrefixSum[i][j] = 0;
+                rsi[i][j] = 50.0;
+                avgVol30d[i][j] = 0;
+                macd[i][j] = 0;
+                atr[i][j] = 0;
+                bbP[i][j] = 0.5;
+            }
+
+            // Technical indicators temp storage for EMA/RSI
+            double ema12 = 0, ema26 = 0;
+            double avgGain = 0, avgLoss = 0;
+
+            for (int j = 0; j < currentSize; j++) {
+                int targetIdx = j + offset;
+                Double pValue = s.closePrices().get(j);
+                double p = (pValue != null) ? pValue : 0.0;
+                double v = s.volumes().get(j) != null ? s.volumes().get(j) : 0.0;
+                
+                closePrices[i][targetIdx] = p;
+                volumes[i][targetIdx] = v;
+                ratings[i][targetIdx] = s.rating().get(j) != null ? s.rating().get(j) : 0.0;
+                epss[i][targetIdx] = s.epss().get(j) != null ? s.epss().get(j) : 0.0;
+                caps[i][targetIdx] = s.caps().get(j) != null ? s.caps().get(j) : 0.0;
+                dates[i][targetIdx] = s.dates().get(j);
+
+                runningSum += p;
+                runningSqSum += (p * p);
+                pricePrefixSum[i][targetIdx] = runningSum;
+                priceSqPrefixSum[i][targetIdx] = runningSqSum;
+
+                // RSI calculation (Simplified/Fast)
+                if (j > 0) {
+                    double diff = p - closePrices[i][targetIdx - 1];
+                    double gain = Math.max(0, diff);
+                    double loss = Math.max(0, -diff);
+                    if (j == 1) {
+                        avgGain = gain; avgLoss = loss;
+                    } else {
+                        avgGain = (avgGain * 13 + gain) / 14;
+                        avgLoss = (avgLoss * 13 + loss) / 14;
+                    }
+                    rsi[i][targetIdx] = 100 - (100 / (1 + (avgGain / (avgLoss + 0.00001))));
+                } else {
+                    rsi[i][targetIdx] = 50.0;
+                }
+
+                // Average Volume 30d (Prefix sum for volume could be used too)
+                volSum += v;
+                if (j >= 30) volSum -= volumes[i][targetIdx - 30];
+                avgVol30d[i][targetIdx] = volSum / Math.min(j + 1, 30);
+
+                // MACD (EMA 12/26)
+                if (j == 0) {
+                    ema12 = p; ema26 = p;
+                } else {
+                    ema12 = (p - ema12) * (2.0/13.0) + ema12;
+                    ema26 = (p - ema26) * (2.0/27.0) + ema26;
+                }
+                macd[i][targetIdx] = ema12 - ema26;
+
+                // Bollinger %B (Needs SMA/StdDev)
+                // Calculated O(1) using prefix sums in the loop for convenience or accessed later
+            }
+
+            // Second pass for indicators requiring future context or stable SMA
+            for (int j = 0; j < currentSize; j++) {
+                int idx = j + offset;
+                double p = closePrices[i][idx];
+                double ma20 = getAvg(i, idx, 20);
+                double vol20 = getVolatility(i, idx, 20) * p; // getVolatility returns perc, convert back to absolute
+                bbP[i][idx] = (vol20 == 0) ? 0.5 : (p - (ma20 - 2 * vol20)) / (4 * vol20);
+                
+                // ATR Proxy using Close-PrevClose as range
+                if (j > 0) {
+                    double range = Math.abs(p - closePrices[i][idx - 1]);
+                    atr[i][idx] = (idx == offset + 1) ? range : (atr[i][idx-1] * 13 + range) / 14;
+                }
+            }
+        }
+    }
+
+    public double getAvg(int stockIdx, int dayIdx, int period) {
+        if (dayIdx < offsets[stockIdx]) return 0.0;
+        int startIdx = Math.max(dayIdx - period, offsets[stockIdx] - 1);
+        int actualPeriod = dayIdx - startIdx;
+        if (actualPeriod <= 0) return 0.0;
+
+        double sum = pricePrefixSum[stockIdx][dayIdx];
+        if (startIdx >= offsets[stockIdx]) {
+            sum -= pricePrefixSum[stockIdx][startIdx];
+        }
+        return sum / actualPeriod;
+    }
+
+    public double getVolatility(int stockIdx, int dayIdx, int period) {
+        if (dayIdx < offsets[stockIdx] + 1) return 0.01;
+        int startIdx = Math.max(dayIdx - period, offsets[stockIdx] - 1);
+        int actualPeriod = dayIdx - startIdx;
+        if (actualPeriod <= 0) return 0.01;
+
+        double sum = pricePrefixSum[stockIdx][dayIdx];
+        double sqSum = priceSqPrefixSum[stockIdx][dayIdx];
+        
+        if (startIdx >= offsets[stockIdx]) {
+            sum -= pricePrefixSum[stockIdx][startIdx];
+            sqSum -= priceSqPrefixSum[stockIdx][startIdx];
+        }
+        
+        double mean = sum / actualPeriod;
+        double variance = (sqSum / actualPeriod) - (mean * mean);
+        return Math.sqrt(Math.max(0, variance)) / (closePrices[stockIdx][dayIdx] + 0.0001);
+    }
+}

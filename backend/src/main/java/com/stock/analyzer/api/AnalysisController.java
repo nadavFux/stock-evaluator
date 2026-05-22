@@ -9,7 +9,6 @@ import java.util.Map;
 
 @RestController
 @RequestMapping("/api/analysis")
-@CrossOrigin(origins = "*")
 public class AnalysisController {
     private final AnalysisService analysisService;
 
@@ -18,9 +17,29 @@ public class AnalysisController {
     }
 
     @PostMapping("/run")
-    public Map<String, String> run(@RequestBody @Valid SimulationRangeConfig config) {
+    public Map<String, String> runAnalysis(@RequestBody @Valid SimulationRangeConfig config) {
         analysisService.runAnalysis(config);
-        return Map.of("message", "Analysis started");
+        return Map.of("status", "Analysis started");
+    }
+
+    @PostMapping("/backtest")
+    public Map<String, String> runBacktest(@RequestBody SimulationRangeConfig config) {
+        try {
+            analysisService.runBacktest(config);
+            return Map.of("status", "Backtest started");
+        } catch (Exception e) {
+            return Map.of("error", e.getMessage());
+        }
+    }
+
+    @PostMapping("/opportunities")
+    public Map<String, String> runOpportunities(@RequestBody SimulationRangeConfig config) {
+        try {
+            analysisService.runOpportunities(config);
+            return Map.of("status", "Opportunities started");
+        } catch (Exception e) {
+            return Map.of("error", e.getMessage());
+        }
     }
 
     @GetMapping("/status")

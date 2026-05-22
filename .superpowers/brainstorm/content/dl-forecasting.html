@@ -1,0 +1,81 @@
+<h2>Step 1: Deep Learning Forecasting Design</h2>
+<p class="subtitle">Integration of LSTM-based price target prediction with confidence intervals</p>
+
+<div class="grid grid-cols-2 gap-8">
+    <!-- Mockup: Enhanced UI -->
+    <div class="bg-slate-800 p-6 rounded-xl border border-slate-700 shadow-xl">
+        <h3 class="text-lg font-semibold mb-4 flex items-center gap-2">
+            <span class="w-2 h-2 bg-emerald-400 rounded-full"></span>
+            UI Integration Mockup
+        </h3>
+        <div class="space-y-6">
+            <div class="p-4 bg-slate-900 rounded-lg border border-slate-700">
+                <div class="flex justify-between items-end mb-2">
+                    <span class="text-slate-400 text-sm">5-Day Price Forecast</span>
+                    <span class="text-emerald-400 font-bold text-xl">$158.40</span>
+                </div>
+                <div class="relative h-8 bg-slate-800 rounded-full overflow-hidden border border-slate-700">
+                    <div class="absolute h-full bg-emerald-500/20" style="left: 40%; width: 30%"></div>
+                    <div class="absolute h-full w-1 bg-emerald-400 shadow-[0_0_10px_#34d399]" style="left: 55%"></div>
+                </div>
+                <div class="flex justify-between text-[10px] text-slate-500 mt-1 font-mono">
+                    <span>$142.10 (Low)</span>
+                    <span class="text-emerald-400 font-bold">Confidence Range (90%)</span>
+                    <span>$175.50 (High)</span>
+                </div>
+            </div>
+            
+            <div class="grid grid-cols-2 gap-4">
+                <div class="bg-slate-900 p-3 rounded-lg border border-slate-700">
+                    <p class="text-[10px] text-slate-500 uppercase font-bold mb-1">Forecast Reliability</p>
+                    <p class="text-blue-400 font-bold">High (84%)</p>
+                </div>
+                <div class="bg-slate-900 p-3 rounded-lg border border-slate-700">
+                    <p class="text-[10px] text-slate-500 uppercase font-bold mb-1">Risk/Reward Ratio</p>
+                    <p class="text-white font-bold">1:3.2</p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Architecture Diagram -->
+    <div class="bg-slate-800 p-6 rounded-xl border border-slate-700 shadow-xl">
+        <h3 class="text-lg font-semibold mb-4 flex items-center gap-2">
+            <span class="w-2 h-2 bg-purple-400 rounded-full"></span>
+            Quantile LSTM Architecture
+        </h3>
+        <div class="flex flex-col gap-3 font-mono text-xs">
+            <div class="p-2 bg-slate-900 rounded border-l-4 border-blue-500">Input: [30 Days x 12 Features]</div>
+            <div class="flex justify-center">↓</div>
+            <div class="p-2 bg-slate-900 rounded border-l-4 border-purple-500">LSTM Layer (64 units) <span class="text-slate-500">- Captures temporal patterns</span></div>
+            <div class="flex justify-center">↓</div>
+            <div class="p-2 bg-slate-900 rounded border-l-4 border-purple-500">LSTM Layer (32 units)</div>
+            <div class="flex justify-center">↓</div>
+            <div class="p-2 bg-slate-900 rounded border-l-4 border-emerald-500">Dense Output (3 Units)
+                <div class="text-[10px] text-slate-400 mt-1">
+                    [0] 0.05 Quantile (Lower Bound)<br>
+                    [1] 0.50 Quantile (Median/Forecast)<br>
+                    [2] 0.95 Quantile (Upper Bound)
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<h3>Proposed Approaches</h3>
+<div class="options">
+  <div class="option" data-choice="quantile" onclick="toggleSelect(this)">
+    <div class="letter">A</div>
+    <div class="content">
+      <h3>Quantile Regression LSTM (Recommended)</h3>
+      <p>Directly predicts the lower bound, median, and upper bound. Robust to non-Gaussian financial data.</p>
+    </div>
+  </div>
+  <div class="option" data-choice="probabilistic" onclick="toggleSelect(this)">
+    <div class="letter">B</div>
+    <div class="content">
+      <h3>Probabilistic LSTM (DeepAR)</h3>
+      <p>Predicts mean and standard deviation. Assumes a distribution (e.g. Normal or Student's t).</p>
+    </div>
+  </div>
+</div>

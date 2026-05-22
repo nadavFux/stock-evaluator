@@ -14,6 +14,7 @@ public class DataInitializer implements CommandLineRunner {
 
     @Override
     public void run(String... args) throws Exception {
+        profileRepository.deleteAll(); // Force update
         if (profileRepository.count() == 0) {
             String defaultConfig = """
                 {
@@ -30,14 +31,14 @@ public class DataInitializer implements CommandLineRunner {
                     "aboveAvgRatingPricePerc": [1.0],
                     "timeFrameForUpwardShortPrice": [1],
                     "maxRSI": [100.0],
-                    "minMarketCap": [1300.0],
-                    "maxMarketCap": [2750.0],
+                    "minMarketCap": [50.0],
+                    "maxMarketCap": [2000000.0],
                     "minRatesOfAvgInc": [1.1],
                     "minRatings": [3.75],
                     "maxRatings": [4.6],
                     "riskFreeRate": [0.05],
-                    "sectors": [101010, 101020, 151010, 151020, 151030, 151050],
-                    "exchanges": ["TASE", "NYSE", "NasdaqGS"],
+                    "sectors": [10, 15, 20, 25, 30, 35, 40, 45, 50, 55, 60],
+                    "exchanges": ["TASE", "NYSE", "NasdaqGS", "NasdaqGM", "NasdaqCM"],
                     "outputPath": "output"
                 }
                 """;
@@ -64,7 +65,7 @@ public class DataInitializer implements CommandLineRunner {
                     "minRatings": [3.5],
                     "maxRatings": [5.0],
                     "riskFreeRate": [0.05],
-                    "sectors": [101010, 151010, 201010],
+                    "sectors": [10, 15, 45],
                     "exchanges": ["NYSE", "NasdaqGS"],
                     "outputPath": "output_aggressive"
                 }

@@ -1,0 +1,109 @@
+{
+    "startTimes": [
+        30,
+        60,
+        90,
+        120,
+        150,
+        180,
+        210,
+        240,
+        270,
+        300,
+        330,
+        360,
+        390,
+        420,
+        450,
+        480
+    ],
+    "selectTimes": [
+        30
+    ],
+    "searchTimes": [
+        20,
+        50,
+        80,
+        110,
+        140,
+        170,
+        200,
+        230,
+        260,
+        290,
+        320,
+        350,
+        380,
+        410,
+        440,
+        470
+    ],
+    "longMovingAvgTimes": [
+        100
+    ],
+    "sellCutOffPerc": [
+        0.95
+    ],
+    "lowerPriceToLongAvgBuyIn": [
+        0.96
+    ],
+    "higherPriceToLongAvgBuyIn": [
+        1
+    ],
+    "timeFrameForUpwardLongAvg": [
+        60
+    ],
+    "timeFrameForOscillator": [
+        90
+    ],
+    "maxPERatios": [
+        21
+    ],
+    "aboveAvgRatingPricePerc": [
+        1
+    ],
+    "timeFrameForUpwardShortPrice": [
+        1
+    ],
+    "maxRSI": [
+        50
+    ],
+    "minMarketCap": [
+        1000
+    ],
+    "maxMarketCap": [
+        8000
+    ],
+    "minRatesOfAvgInc": [
+        1.1
+    ],
+    "minRatings": [
+        4.2
+    ],
+    "maxRatings": [
+        4.7
+    ],
+    "riskFreeRate": [
+        0.1
+    ],
+    "sectors": [
+        10,
+        101010,
+        101020,
+        15,
+        151010,
+        151020,
+        151030,
+        151040,
+        151050
+    ],
+    "exchanges": [
+        "TASE",
+        "NYSE",
+        "NasdaqGS"
+    ],
+    "outputPath": "output",
+    "buyThreshold": [
+        0.65
+    ]
+}

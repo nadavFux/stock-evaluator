@@ -1,14 +1,14 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { Client } from '@stomp/stompjs';
-import SockJS from 'sockjs-client';
-import { Play, Settings, Activity, List, TrendingUp, AlertCircle, BarChart3, ChevronRight, Search, X, Download, Target, ChevronDown } from 'lucide-react';
-import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell } from 'recharts';
+import { Play, Settings, Activity, List, TrendingUp, BarChart3, ChevronRight, Search, X, Download, Target, ChevronDown, RefreshCw } from 'lucide-react';
+import { BarChart, Bar, XAxis, Tooltip, ResponsiveContainer, Cell } from 'recharts';
 import StockChart from './StockChart';
 import ConfigPanel from './ConfigPanel';
+import SectorHeatmap from './SectorHeatmap';
 
 interface AnalysisUpdate {
-    type: 'STATUS' | 'PROGRESS' | 'RESULTS' | 'ERROR' | 'ML_FEATURES';
-    payload: any;
+    type: 'STATUS' | 'PROGRESS' | 'RESULTS' | 'ERROR' | 'ML_FEATURES' | 'BACKTEST_REPORT';
+    payload: string | AnalysisResult[] | BacktestReport | FeatureImportance[];
     timestamp: number;
 }
 
@@ -19,92 +19,191 @@ interface Profile {
     configJson: string;
 }
 
+interface FeatureImportance {
+    name: string;
+    val: number;
+}
+
+interface Stock {
+    ticker_symbol: string;
+    name: string;
+}
+
+interface StockGraphState {
+    stock: Stock;
+    dates: string[];
+    closePrices: number[];
+    volumes?: number[];
+    avgs?: (number | null)[];
+    rating?: number[];
+}
+
+interface TradePoint {
+    date: string;
+    type: 'BUY' | 'SELL';
+    price: number;
+}
+
+interface AnalysisResult {
+    stock: StockGraphState;
+    result: {
+        heuristicScore: number;
+        aiPredictedReturn: number;
+        q05: number;
+        q50: number;
+        q95: number;
+        rvol?: number;
+        volatility?: number;
+        momentum?: number;
+    };
+    tradePoints: TradePoint[];
+}
+
+interface BacktestTrade {
+    buyDate: string;
+    ticker: string;
+    days: number;
+    lastGained: number;
+}
+
+interface BacktestReport {
+    totalTrades: number;
+    totalGain: string;
+    avgGain: string;
+    trades: BacktestTrade[];
+}
+
+interface Config {
+    startTimes: number[];
+    selectTimes: number[];
+    searchTimes: number[];
+    longMovingAvgTimes: number[];
+    sellCutOffPerc: number[];
+    lowerPriceToLongAvgBuyIn: number[];
+    higherPriceToLongAvgBuyIn: number[];
+    timeFrameForUpwardLongAvg: number[];
+    timeFrameForOscillator: number[];
+    maxPERatios: number[];
+    aboveAvgRatingPricePerc: number[];
+    timeFrameForUpwardShortPrice: number[];
+    maxRSI: number[];
+    minMarketCap: number[];
+    maxMarketCap: number[];
+    minRatesOfAvgInc: number[];
+    minRatings: number[];
+    maxRatings: number[];
+    buyThreshold: number[];
+    riskFreeRate: number[];
+    movingAvgGapWeight: number[];
+    reversionToMeanWeight: number[];
+    ratingWeight: number[];
+    upwardIncRateWeight: number[];
+    rvolWeight: number[];
+    pegWeight: number[];
+    volatilityCompressionWeight: number[];
+    sectors: number[];
+    exchanges: string[];
+    outputPath: string;
+}
+
 const StockDashboard: React.FC = () => {
     const [status, setStatus] = useState<string>('Idle');
     const [progress, setProgress] = useState<string>('');
     const [percent, setPercent] = useState<number>(0);
     const [logs, setLogs] = useState<string[]>([]);
-    const [results, setResults] = useState<any[]>([]);
-    const [featureImportance, setFeatureImportance] = useState<any[]>([]);
+    const [results, setResults] = useState<AnalysisResult[]>([]);
+    const [backtestReport, setBacktestReport] = useState<BacktestReport | null>(null);
+    const [featureImportance, setFeatureImportance] = useState<FeatureImportance[]>([]);
     const [isRunning, setIsRunning] = useState(false);
-    const [selectedStock, setSelectedStock] = useState<any>(null);
+    const [selectedStock, setSelectedStock] = useState<AnalysisResult | null>(null);
+    const [comparisonTickers, setComparisonTickers] = useState<string[]>([]);
+    const [comparisonData, setComparisonData] = useState<StockGraphState[]>([]);
+    const [compSearch, setCompSearch] = useState('');
     const [showConfig, setShowConfig] = useState(false);
     const [searchTerm, setSearchTerm] = useState('');
     const [profiles, setProfiles] = useState<Profile[]>([]);
-    const [currentConfig, setCurrentConfig] = useState<any>({
-        startTimes: [50, 110, 200],
-        selectTimes: [30],
-        searchTimes: [30, 80, 130],
-        longMovingAvgTimes: [140],
-        sellCutOffPerc: [0.93],
-        lowerPriceToLongAvgBuyIn: [0.92],
-        higherPriceToLongAvgBuyIn: [1.02],
-        timeFrameForUpwardLongAvg: [40],
-        timeFrameForOscillator: [110],
-        maxPERatios: [25],
-        aboveAvgRatingPricePerc: [1.0],
-        timeFrameForUpwardShortPrice: [1],
-        maxRSI: [100.0],
-        minMarketCap: [1300.0],
-        maxMarketCap: [2750.0],
-        minRatesOfAvgInc: [1.1],
-        minRatings: [3.75],
-        maxRatings: [4.6],
-        riskFreeRate: [0.05],
-        sectors: [101010, 101020, 151010, 151020, 151030, 151050],
-        exchanges: ["TASE", "NYSE", "NasdaqGS"],
-        outputPath: "output"
+    const [currentConfig, setCurrentConfig] = useState<Config>(() => {
+        const saved = localStorage.getItem('stockAnalyzerConfig');
+        if (saved) {
+            try { 
+                return JSON.parse(saved) as Config; 
+            } catch {
+                // Ignore parse errors
+            }
+        }
+        return {
+            startTimes: [50, 110, 200],
+            selectTimes: [30],
+            searchTimes: [30, 80, 130],
+            longMovingAvgTimes: [140],
+            sellCutOffPerc: [0.93],
+            lowerPriceToLongAvgBuyIn: [0.92],
+            higherPriceToLongAvgBuyIn: [1.02],
+            timeFrameForUpwardLongAvg: [40],
+            timeFrameForOscillator: [110],
+            maxPERatios: [25],
+            aboveAvgRatingPricePerc: [1.0],
+            timeFrameForUpwardShortPrice: [1],
+            maxRSI: [100.0],
+            minMarketCap: [1300.0],
+            maxMarketCap: [2750.0],
+            minRatesOfAvgInc: [1.1],
+            minRatings: [3.75],
+            maxRatings: [4.6],
+            buyThreshold: [0.65],
+            riskFreeRate: [0.05],
+            movingAvgGapWeight: [0.20],
+            reversionToMeanWeight: [0.15],
+            ratingWeight: [0.20],
+            upwardIncRateWeight: [0.15],
+            rvolWeight: [0.10],
+            pegWeight: [0.10],
+            volatilityCompressionWeight: [0.10],
+            sectors: [101010, 101020, 151010, 151020, 151030, 151050],
+            exchanges: ["TASE", "NYSE", "NasdaqGS"],
+            outputPath: "output"
+        };
     });
     const stompClient = useRef<Client | null>(null);
 
-    useEffect(() => {
-        const client = new Client({
-            webSocketFactory: () => new SockJS('http://localhost:8080/ws-stock'),
-            onConnect: () => {
-                client.subscribe('/topic/updates', (message) => {
-                    const update: AnalysisUpdate = JSON.parse(message.body);
-                    handleUpdate(update);
-                });
-            },
-        });
-        client.activate();
-        stompClient.current = client;
-        
-        fetchProfiles();
-        
-        return () => client.deactivate();
-    }, []);
+    const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8080';
 
-    const fetchProfiles = async () => {
+    const fetchProfiles = useCallback(async () => {
         try {
-            const res = await fetch('http://localhost:8080/api/profiles');
-            const data = await res.json();
+            const res = await fetch(`${API_BASE_URL}/api/profiles`, {
+                headers: { 'bypass-tunnel-reminder': 'true' }
+            });
+            if (!res.ok) throw new Error('Backend failed to return profiles');
+            const data = await res.json() as Profile[];
             setProfiles(data);
-            if (data.length > 0) {
-                setCurrentConfig(JSON.parse(data[0].configJson));
-            }
         } catch (error) {
             console.error('Failed to fetch profiles', error);
         }
-    };
+    }, [API_BASE_URL]);
 
-    const handleUpdate = (update: AnalysisUpdate) => {
+    const handleUpdate = useCallback((update: AnalysisUpdate) => {
         const time = new Date(update.timestamp).toLocaleTimeString();
         switch (update.type) {
             case 'STATUS':
-                setStatus(update.payload);
+                setStatus(update.payload as string);
                 setLogs(prev => [`[${time}] ${update.payload}`, ...prev]);
                 break;
-            case 'PROGRESS':
-                setProgress(update.payload);
-                const match = update.payload.match(/(\d+)%/);
+            case 'PROGRESS': {
+                setProgress(update.payload as string);
+                const match = (update.payload as string).match(/(\d+)%/);
                 if (match) setPercent(parseInt(match[1]));
                 break;
+            }
             case 'ML_FEATURES':
-                setFeatureImportance(update.payload);
+                setFeatureImportance(update.payload as FeatureImportance[]);
+                break;
+            case 'BACKTEST_REPORT':
+                setBacktestReport(update.payload as BacktestReport);
+                setIsRunning(false);
+                setPercent(100);
                 break;
             case 'RESULTS':
-                setResults(update.payload);
+                setResults(update.payload as AnalysisResult[]);
                 setIsRunning(false);
                 setPercent(100);
                 break;
@@ -113,7 +212,87 @@ const StockDashboard: React.FC = () => {
                 setIsRunning(false);
                 break;
         }
+    }, []);
+
+    useEffect(() => {
+        localStorage.setItem('stockAnalyzerConfig', JSON.stringify(currentConfig));
+    }, [currentConfig]);
+
+    useEffect(() => {
+        // Convert http/https to ws/wss for native WebSocket support
+        // Append '/websocket' because the backend is configured with .withSockJS()
+        const socketUrl = API_BASE_URL.replace('http', 'ws') + '/ws-stock/websocket';
+        console.log(`[WebSocket] Connecting via native WebSocket to: ${socketUrl}`);
+
+        const client = new Client({
+            brokerURL: socketUrl,
+            reconnectDelay: 5000,
+            heartbeatIncoming: 4000,
+            heartbeatOutgoing: 4000,
+            onConnect: () => {
+                console.log('[WebSocket] Connected successfully');
+                client.subscribe('/topic/updates', (message) => {
+                    const update: AnalysisUpdate = JSON.parse(message.body);
+                    handleUpdate(update);
+                });
+            },
+            onStompError: (frame) => {
+                console.error('[WebSocket] STOMP Error:', frame.headers['message']);
+                setLogs(prev => [`[SYSTEM] WebSocket STOMP Error: ${frame.headers['message']}`, ...prev]);
+            },
+            onWebSocketError: (event) => {
+                console.error('[WebSocket] Connection Error:', event);
+                setLogs(prev => [`[SYSTEM] WebSocket Connection Failed. Check tunnel bypass page.`, ...prev]);
+            }
+        });
+
+        client.activate();
+        stompClient.current = client;
+
+        fetchProfiles();
+
+        return () => {
+            client.deactivate();
+        };
+    }, [API_BASE_URL, fetchProfiles, handleUpdate]);
+
+    const runBacktest = async (configToUse: Config) => {
+        setIsRunning(true);
+        setBacktestReport(null);
+        setLogs([]);
+        setPercent(0);
+        try {
+            await fetch(`${API_BASE_URL}/api/analysis/backtest`, {
+                method: 'POST',
+                headers: { 
+                    'Content-Type': 'application/json',
+                    'bypass-tunnel-reminder': 'true'
+                },
+                body: JSON.stringify(configToUse)
+            });
+        } catch {
+            setIsRunning(false);
+        }
     };
+
+    const runOpportunities = async (configToUse: Config) => {
+        setIsRunning(true);
+        setLogs([]);
+        setPercent(0);
+        try {
+            await fetch(`${API_BASE_URL}/api/analysis/opportunities`, {
+                method: 'POST',
+                headers: { 
+                    'Content-Type': 'application/json',
+                    'bypass-tunnel-reminder': 'true'
+                },
+                body: JSON.stringify(configToUse)
+            });
+        } catch {
+            setIsRunning(false);
+        }
+    };
+
 
     const startAnalysis = async () => {
         setIsRunning(true);
@@ -121,33 +300,38 @@ const StockDashboard: React.FC = () => {
         setLogs([]);
         setPercent(0);
         try {
-            const response = await fetch('http://localhost:8080/api/analysis/run', {
+            const response = await fetch(`${API_BASE_URL}/api/analysis/run`, {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
+                headers: { 
+                    'Content-Type': 'application/json',
+                    'bypass-tunnel-reminder': 'true'
+                },
                 body: JSON.stringify(currentConfig)
             });
             if (!response.ok) {
-                const errorData = await response.json();
+                const errorData = await response.json() as { message?: string };
                 setLogs(prev => [`[${new Date().toLocaleTimeString()}] ERROR: ${errorData.message || 'Validation failed'}`, ...prev]);
                 setIsRunning(false);
             }
-        } catch (error) {
+        } catch {
             setIsRunning(false);
         }
     };
 
     const selectProfile = (profile: Profile) => {
         try {
-            setCurrentConfig(JSON.parse(profile.configJson));
-        } catch (e) {
+            setCurrentConfig(JSON.parse(profile.configJson) as Config);
+        } catch {
             console.error('Failed to parse profile config');
         }
     };
 
     const exportParams = async () => {
         try {
-            const res = await fetch('http://localhost:8080/api/analysis/export-params');
-            const data = await res.json();
+            const res = await fetch(`${API_BASE_URL}/api/analysis/export-params`, {
+                headers: { 'bypass-tunnel-reminder': 'true' }
+            });
+            const data = await res.json() as { content?: string, error?: string };
             if (data.content) {
                 const blob = new Blob([data.content], { type: 'text/yaml' });
                 const url = window.URL.createObjectURL(blob);
@@ -163,21 +347,47 @@ const StockDashboard: React.FC = () => {
         }
     };
 
-    const savePreset = async (name: string, description: string, config: any) => {
+    const savePreset = async (name: string, description: string, config: Config) => {
         try {
-            await fetch('http://localhost:8080/api/profiles', {
+            await fetch(`${API_BASE_URL}/api/profiles`, {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
+                headers: { 
+                    'Content-Type': 'application/json',
+                    'bypass-tunnel-reminder': 'true'
+                },
                 body: JSON.stringify({
                     name,
                     description,
                     configJson: JSON.stringify(config)
                 })
             });
-            fetchProfiles();
+            void fetchProfiles();
         } catch (error) {
             console.error('Failed to save preset', error);
         }
+    };
+
+    const addComparison = async (ticker: string) => {
+        if (!ticker || comparisonTickers.includes(ticker.toUpperCase())) return;
+        try {
+            const res = await fetch(`${API_BASE_URL}/api/stocks/${ticker.toUpperCase()}/graph`, {
+                headers: { 'bypass-tunnel-reminder': 'true' }
+            });
+
+            const data = await res.json();
+            if (data) {
+                setComparisonData(prev => [...prev, data]);
+                setComparisonTickers(prev => [...prev, ticker.toUpperCase()]);
+                setCompSearch('');
+            }
+        } catch (error) {
+            console.error('Failed to add comparison', error);
+        }
+    };
+
+    const removeComparison = (ticker: string) => {
+        setComparisonTickers(prev => prev.filter(t => t !== ticker));
+        setComparisonData(prev => prev.filter(d => d.stock.ticker_symbol !== ticker));
     };
 
     const filteredResults = results.filter(res => 
@@ -218,17 +428,25 @@ const StockDashboard: React.FC = () => {
                                     Strategy: <span className="text-blue-400 font-bold">{profiles.find(p => JSON.stringify(JSON.parse(p.configJson)) === JSON.stringify(currentConfig))?.name || 'Custom'}</span>
                                     <ChevronDown size={14} />
                                 </button>
-                                <div className="absolute top-full left-0 mt-2 w-64 bg-[#1e293b] border border-slate-700 rounded-xl shadow-2xl opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all z-[60]">
-                                    <div className="p-2">
+                                <div className="absolute top-full left-0 mt-2 w-72 bg-[#1e293b] border border-slate-700 rounded-xl shadow-2xl opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all z-[60]">
+                                    <div className="p-2 space-y-1">
                                         {profiles.map(p => (
-                                            <button 
-                                                key={p.id}
-                                                onClick={() => selectProfile(p)}
-                                                className="w-full text-left px-4 py-3 rounded-lg hover:bg-slate-800 transition-colors flex flex-col gap-1"
-                                            >
-                                                <span className="text-white font-bold text-sm">{p.name}</span>
-                                                <span className="text-slate-500 text-xs line-clamp-1">{p.description}</span>
-                                            </button>
+                                            <div key={p.id} className="group/item relative rounded-lg hover:bg-slate-800 transition-colors">
+                                                <button 
+                                                    onClick={() => selectProfile(p)}
+                                                    className="w-full text-left px-4 py-3 flex flex-col gap-1 pr-12"
+                                                >
+                                                    <span className="text-white font-bold text-sm">{p.name}</span>
+                                                    <span className="text-slate-500 text-[10px] line-clamp-1">{p.description}</span>
+                                                </button>
+                                                <button 
+                                                    onClick={(e) => { e.stopPropagation(); runBacktest(JSON.parse(p.configJson)); }}
+                                                    title="Run Backtest (Last 100 Days)"
+                                                    className="absolute right-2 top-1/2 -translate-y-1/2 p-2 text-slate-500 hover:text-blue-400 opacity-0 group-hover/item:opacity-100 transition-all"
+                                                >
+                                                    <RefreshCw size={16} />
+                                                </button>
+                                            </div>
                                         ))}
                                     </div>
                                 </div>
@@ -239,6 +457,22 @@ const StockDashboard: React.FC = () => {
                         </div>
                     </div>
                     <div className="flex gap-4">
+                        <button 
+                            onClick={() => runBacktest(currentConfig)}
+                            disabled={isRunning}
+                            className="flex items-center gap-2 px-4 py-2 rounded-lg bg-slate-800 text-slate-300 hover:bg-slate-700 transition-colors disabled:opacity-50"
+                        >
+                            <RefreshCw size={18} className={isRunning ? 'animate-spin' : ''} /> 
+                            {isRunning ? 'Running...' : 'Backtest Current'}
+                        </button>
+                        <button 
+                            onClick={() => runOpportunities(currentConfig)}
+                            disabled={isRunning}
+                            className="flex items-center gap-2 px-4 py-2 rounded-lg bg-slate-800 text-slate-300 hover:bg-slate-700 transition-colors disabled:opacity-50"
+                        >
+                            <RefreshCw size={18} className={isRunning ? 'animate-spin' : ''} /> 
+                            {isRunning ? 'Running...' : 'Find Opportunities'}
+                        </button>
                         <button 
                             onClick={exportParams}
                             className="flex items-center gap-2 px-4 py-2 rounded-lg bg-slate-800 text-slate-300 hover:bg-slate-700 transition-colors"
@@ -257,6 +491,69 @@ const StockDashboard: React.FC = () => {
                         </button>
                     </div>
                 </header>
+
+                {backtestReport && (
+                    <div className="mb-8 p-8 bg-gradient-to-br from-indigo-950/40 to-slate-900 rounded-2xl border border-indigo-500/20 shadow-2xl animate-in zoom-in-95 duration-300">
+                        <div className="flex justify-between items-start mb-8">
+                            <div>
+                                <h2 className="text-2xl font-black text-white tracking-tight flex items-center gap-3">
+                                    <RefreshCw className="text-blue-400" size={24} />
+                                    100-Day Historical Backtest Report
+                                </h2>
+                                <p className="text-slate-400 text-sm mt-1">Based on active strategy parameters and dual-engine scoring</p>
+                            </div>
+                            <button onClick={() => setBacktestReport(null)} className="p-1 hover:bg-slate-800 rounded text-slate-500 hover:text-white"><X size={20}/></button>
+                        </div>
+                        
+                        <div className="grid grid-cols-4 gap-6 mb-8">
+                            <div className="bg-slate-900/50 p-6 rounded-xl border border-slate-800">
+                                <span className="text-slate-500 text-[10px] font-black uppercase tracking-widest block mb-1">Total Trades</span>
+                                <span className="text-3xl font-mono font-bold text-white">{backtestReport.totalTrades}</span>
+                            </div>
+                            <div className="bg-slate-900/50 p-6 rounded-xl border border-slate-800">
+                                <span className="text-slate-500 text-[10px] font-black uppercase tracking-widest block mb-1">Cumulative Gain</span>
+                                <span className={`text-3xl font-mono font-bold ${backtestReport.totalGain.startsWith('-') ? 'text-red-400' : 'text-emerald-400'}`}>
+                                    {backtestReport.totalGain}
+                                </span>
+                            </div>
+                            <div className="bg-slate-900/50 p-6 rounded-xl border border-slate-800">
+                                <span className="text-slate-500 text-[10px] font-black uppercase tracking-widest block mb-1">Avg Gain / Trade</span>
+                                <span className={`text-3xl font-mono font-bold ${backtestReport.avgGain.startsWith('-') ? 'text-red-400' : 'text-emerald-400'}`}>
+                                    {backtestReport.avgGain}
+                                </span>
+                            </div>
+                            <div className="bg-slate-900/50 p-6 rounded-xl border border-slate-800">
+                                <span className="text-slate-500 text-[10px] font-black uppercase tracking-widest block mb-1">Success Signal</span>
+                                <span className="text-3xl font-mono font-bold text-blue-400">Stable</span>
+                            </div>
+                        </div>
+
+                        <div className="bg-slate-950/50 rounded-xl border border-slate-800 overflow-hidden">
+                            <table className="w-full text-sm">
+                                <thead>
+                                    <tr className="bg-slate-900/50 text-slate-500 text-[10px] font-black uppercase tracking-widest text-left">
+                                        <th className="px-6 py-3">Date</th>
+                                        <th className="px-6 py-3">Ticker</th>
+                                        <th className="px-6 py-3">Duration</th>
+                                        <th className="px-6 py-3 text-right">Result</th>
+                                    </tr>
+                                </thead>
+                                <tbody className="divide-y divide-slate-800/50 font-mono">
+                                    {backtestReport.trades.map((t: BacktestTrade, i: number) => (
+                                        <tr key={i} className="hover:bg-white/5">
+                                            <td className="px-6 py-3 text-slate-400">{t.buyDate}</td>
+                                            <td className="px-6 py-3 text-white font-bold">{t.ticker}</td>
+                                            <td className="px-6 py-3 text-slate-500">{t.days} Days</td>
+                                            <td className={`px-6 py-3 text-right font-bold ${t.lastGained > 0 ? 'text-emerald-400' : 'text-red-400'}`}>
+                                                {(t.lastGained * 100).toFixed(2)}%
+                                            </td>
+                                        </tr>
+                                    ))}
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                )}
 
                 <div className="grid grid-cols-12 gap-6 mb-8">
                     {/* Status & Progress */}
@@ -294,7 +591,7 @@ const StockDashboard: React.FC = () => {
                                             cursor={{ fill: 'rgba(255,255,255,0.05)' }}
                                         />
                                         <Bar dataKey="val" radius={[6, 6, 0, 0]}>
-                                            {featureImportance.map((entry, index) => (
+                                            {featureImportance.map((_, index) => (
                                                 <Cell key={`cell-${index}`} fill={['#3b82f6', '#8b5cf6', '#ec4899', '#f59e0b', '#10b981'][index % 5]} />
                                             ))}
                                         </Bar>
@@ -366,7 +663,7 @@ const StockDashboard: React.FC = () => {
                                 </tr>
                             </thead>
                             <tbody className="divide-y divide-slate-800/50">
-                                {filteredResults.map((res, i) => (
+                                {filteredResults.map((res: AnalysisResult, i: number) => (
                                     <tr 
                                         key={i} 
                                         onClick={() => setSelectedStock(res)}
@@ -407,6 +704,21 @@ const StockDashboard: React.FC = () => {
                         </table>
                     </div>
                 </div>
+
+                {/* Sector Heatmap */}
+                <div className="bg-[#1e293b] rounded-2xl border border-slate-800 shadow-2xl overflow-hidden mb-12">
+                    <div className="px-8 py-6 border-b border-slate-800 flex items-center justify-between bg-slate-900/20">
+                        <div className="flex items-center gap-3">
+                            <div className="p-2 bg-purple-500/10 rounded-lg text-purple-400 shadow-inner">
+                                <BarChart3 size={22} />
+                            </div>
+                            <h2 className="text-xl font-bold text-white tracking-wide">Sector Performance Heatmap</h2>
+                        </div>
+                    </div>
+                    <div className="h-[500px] p-6">
+                        <SectorHeatmap sectors={currentConfig.sectors} exchanges={currentConfig.exchanges} />
+                    </div>
+                </div>
             </main>
 
             {/* Details Modal */}
@@ -429,21 +741,64 @@ const StockDashboard: React.FC = () => {
 
                             <div className="grid grid-cols-3 gap-6 mb-10">
                                 <div className="bg-[#0f172a] p-6 rounded-2xl border border-slate-800">
-                                    <p className="text-slate-500 text-xs font-bold uppercase mb-2 tracking-widest">AI Prediction</p>
-                                    <p className="text-3xl font-bold text-emerald-400">+{(selectedStock.result.aiPredictedReturn * 100).toFixed(2)}%</p>
+                                    <p className="text-slate-500 text-xs font-bold uppercase mb-2 tracking-widest">30-Day Forecast</p>
+                                    <p className="text-3xl font-bold text-emerald-400">
+                                        {(selectedStock.result.q50 * 100).toFixed(2)}%
+                                    </p>
+                                </div>
+                                <div className="bg-[#0f172a] p-6 rounded-2xl border border-slate-800">
+                                    <p className="text-slate-500 text-xs font-bold uppercase mb-2 tracking-widest">Confidence Interval (90%)</p>
+                                    <p className="text-xl font-bold text-slate-300">
+                                        {(selectedStock.result.q05 * 100).toFixed(1)}% to {(selectedStock.result.q95 * 100).toFixed(1)}%
+                                    </p>
                                 </div>
                                 <div className="bg-[#0f172a] p-6 rounded-2xl border border-slate-800">
                                     <p className="text-slate-500 text-xs font-bold uppercase mb-2 tracking-widest">Technical Score</p>
                                     <p className="text-3xl font-bold text-blue-400">{selectedStock.result.heuristicScore.toFixed(2)}</p>
                                 </div>
-                                <div className="bg-[#0f172a] p-6 rounded-2xl border border-slate-800">
-                                    <p className="text-slate-500 text-xs font-bold uppercase mb-2 tracking-widest">Market Cap</p>
-                                    <p className="text-3xl font-bold text-white">{(selectedStock.stock.stock.market_cap_before_filing_date / 1000).toFixed(1)}B</p>
-                                </div>
                             </div>
 
                             <div className="h-[450px] mb-8">
-                                <StockChart data={selectedStock.stock} markers={selectedStock.tradePoints} />
+                                <StockChart 
+                                    data={selectedStock.stock} 
+                                    markers={selectedStock.tradePoints} 
+                                    comparisonData={comparisonData}
+                                />
+                            </div>
+
+                            <div className="mb-10">
+                                <div className="flex items-center justify-between mb-4">
+                                    <h3 className="text-xl font-bold text-white">Performance Comparison</h3>
+                                    <div className="relative">
+                                        <input 
+                                            type="text" 
+                                            placeholder="Compare with (e.g. SPY)..." 
+                                            value={compSearch}
+                                            onChange={(e) => setCompSearch(e.target.value)}
+                                            onKeyDown={(e) => e.key === 'Enter' && addComparison(compSearch)}
+                                            className="bg-slate-900 border border-slate-700 rounded-lg pl-4 pr-10 py-2 text-sm focus:outline-none focus:border-blue-500 w-64"
+                                        />
+                                        <button 
+                                            onClick={() => addComparison(compSearch)}
+                                            className="absolute right-2 top-1/2 -translate-y-1/2 p-1 text-blue-400 hover:text-blue-300"
+                                        >
+                                            <TrendingUp size={18} />
+                                        </button>
+                                    </div>
+                                </div>
+                                <div className="flex flex-wrap gap-3">
+                                    <div className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 text-xs font-bold">
+                                        {selectedStock.stock.stock.ticker_symbol} (Main)
+                                    </div>
+                                    {comparisonTickers.map(ticker => (
+                                        <div key={ticker} className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-blue-500/10 text-blue-400 border border-blue-500/20 text-xs font-bold">
+                                            {ticker}
+                                            <button onClick={() => removeComparison(ticker)} className="hover:text-white transition-colors">
+                                                <X size={14} />
+                                            </button>
+                                        </div>
+                                    ))}
+                                </div>
                             </div>
 
                             <div className="bg-slate-900/50 p-8 rounded-2xl border border-slate-800">

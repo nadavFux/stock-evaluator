@@ -1,18 +1,44 @@
-import React, { useEffect, useRef } from 'react';
-import { createChart, ColorType } from 'lightweight-charts';
-import type { IChartApi } from 'lightweight-charts';
+import React, { useEffect, useRef, useState } from 'react';
+import { createChart, ColorType, CandlestickSeries, LineSeries, HistogramSeries, createSeriesMarkers } from 'lightweight-charts';
+import type { IChartApi, ISeriesApi, SeriesType, CandlestickData, LineData, HistogramData, Time } from 'lightweight-charts';
+import { Maximize2, Minimize2, Pencil, MousePointer2 } from 'lucide-react';
 
-interface StockChartProps {
-    data: any; // StockGraphState
-    markers?: any[]; // TradePoint[]
+interface Stock {
+    ticker_symbol: string;
+    name: string;
 }
 
-const StockChart: React.FC<StockChartProps> = ({ data, markers }) => {
+interface StockGraphState {
+    stock: Stock;
+    dates: string[];
+    closePrices: number[];
+    volumes?: number[];
+    avgs?: (number | null)[];
+}
+
+interface TradePoint {
+    date: string;
+    type: 'BUY' | 'SELL';
+    price: number;
+}
+
+interface StockChartProps {
+    data: StockGraphState;
+    markers?: TradePoint[];
+    comparisonData?: StockGraphState[];
+}
+
+const StockChart: React.FC<StockChartProps> = ({ data, markers, comparisonData = [] }) => {
     const chartContainerRef = useRef<HTMLDivElement>(null);
+    const tooltipRef = useRef<HTMLDivElement>(null);
     const chartRef = useRef<IChartApi | null>(null);
+    const [isFullscreen, setIsFullscreen] = useState(false);
+    const [tool, setTool] = useState<'pan' | 'line'>('pan');
 
     useEffect(() => {
         if (!chartContainerRef.current) return;
+
+        const isComparison = comparisonData.length > 0;
 
         const chart = createChart(chartContainerRef.current, {
             layout: {
@@ -23,69 +49,161 @@ const StockChart: React.FC<StockChartProps> = ({ data, markers }) => {
                 vertLines: { color: '#334155' },
                 horzLines: { color: '#334155' },
             },
+            localization: {
+                priceFormatter: (price: number) => isComparison ? `${price.toFixed(2)}%` : `$${price.toFixed(2)}`,
+            },
             width: chartContainerRef.current.clientWidth,
-            height: 400,
+            height: isFullscreen ? window.innerHeight - 100 : 400,
         });
 
-        const candlestickSeries = chart.addCandlestickSeries({
-            upColor: '#10b981',
-            downColor: '#ef4444',
-            borderVisible: false,
-            wickUpColor: '#10b981',
-            wickDownColor: '#ef4444',
-        });
+        const mainSeries = isComparison 
+            ? chart.addSeries(LineSeries, { color: '#10b981', lineWidth: 3, title: data.stock.ticker_symbol })
+            : chart.addSeries(CandlestickSeries, {
+                upColor: '#10b981',
+                downColor: '#ef4444',
+                borderVisible: false,
+                wickUpColor: '#10b981',
+                wickDownColor: '#ef4444',
+            });
 
-        if (!candlestickSeries) return;
+        const volumeSeries = !isComparison ? chart.addSeries(HistogramSeries, {
+            color: '#3b82f6',
+            priceFormat: { type: 'volume' },
+            priceScaleId: '', // overlay
+        }) : null;
 
-        const maSeries = chart.addLineSeries({
+        if (volumeSeries) {
+            volumeSeries.priceScale().applyOptions({
+                scaleMargins: { top: 0.8, bottom: 0 },
+            });
+        }
+
+        const maSeries = !isComparison ? chart.addSeries(LineSeries, {
             color: '#3b82f6',
             lineWidth: 2,
             title: 'Long MA',
-        });
-
-        if (!maSeries) return;
+        }) : null;
 
         // Prepare data
-        if (!data?.closePrices || !data?.dates || !data?.avgs) {
+        if (!data?.closePrices || !data?.dates) {
             console.error('Incomplete data for chart', data);
             return;
         }
 
-        const chartData = data.closePrices.map((price: number, i: number) => {
-            if (data.dates[i] === undefined) return null;
-            return {
-                time: data.dates[i],
-                open: price * 0.99,
-                high: price * 1.01,
-                low: price * 0.98,
-                close: price,
-            };
-        }).filter(Boolean);
+        const firstPrice = data.closePrices[0];
+        const chartData: (CandlestickData<Time> | LineData<Time>)[] = [];
+        const volData: HistogramData<Time>[] = [];
 
-        const maData = data.avgs.map((avg: number, i: number) => {
-            if (data.dates[i] === undefined || avg === null || avg === undefined) return null;
-            return {
-                time: data.dates[i],
-                value: avg,
-            };
-        }).filter(Boolean);
+        data.closePrices.forEach((price: number, i: number) => {
+            if (data.dates[i] === undefined) return;
+            const time = data.dates[i] as Time;
+            
+            if (isComparison) {
+                (chartData as LineData<Time>[]).push({
+                    time,
+                    value: ((price - firstPrice) / firstPrice) * 100,
+                });
+            } else {
+                const open = i > 0 ? data.closePrices[i-1] : price;
+                (chartData as CandlestickData<Time>[]).push({
+                    time,
+                    open: open,
+                    high: Math.max(open, price) * 1.005,
+                    low: Math.min(open, price) * 0.995,
+                    close: price,
+                });
+                
+                if (data.volumes?.[i]) {
+                    volData.push({
+                        time,
+                        value: data.volumes[i],
+                        color: price >= open ? 'rgba(16, 185, 129, 0.5)' : 'rgba(239, 68, 68, 0.5)',
+                    });
+                }
+            }
+        });
 
-        if (chartData.length === 0) return;
+        if (maSeries && data.avgs) {
+            const maData = data.avgs.map((avg: number | null, i: number) => {
+                if (data.dates[i] === undefined || avg === null || avg === undefined) return null;
+                return { time: data.dates[i] as Time, value: avg };
+            }).filter((d): d is LineData<Time> => d !== null);
+            maSeries.setData(maData);
+        }
 
-        candlestickSeries.setData(chartData);
-        maSeries.setData(maData);
+        if (isComparison) {
+            (mainSeries as ISeriesApi<"Line">).setData(chartData as LineData<Time>[]);
+        } else {
+            (mainSeries as ISeriesApi<"Candlestick">).setData(chartData as CandlestickData<Time>[]);
+        }
+        
+        if (volumeSeries && volData.length) volumeSeries.setData(volData);
+
+        // Comparison Series
+        if (isComparison) {
+            const colors = ['#3b82f6', '#f59e0b', '#8b5cf6', '#ec4899', '#06b6d4'];
+            comparisonData.forEach((comp, idx) => {
+                const compSeries = chart.addSeries(LineSeries, {
+                    color: colors[idx % colors.length],
+                    lineWidth: 2,
+                    title: comp.stock.ticker_symbol,
+                });
+                const compFirstPrice = comp.closePrices[0];
+                const compData = comp.closePrices.map((p: number, i: number) => ({
+                    time: comp.dates[i] as Time,
+                    value: ((p - compFirstPrice) / compFirstPrice) * 100,
+                })).filter((d) => d.time);
+                compSeries.setData(compData);
+            });
+        }
+
+        // Tooltip logic
+        chart.subscribeCrosshairMove(param => {
+            if (!tooltipRef.current || !chartContainerRef.current) return;
+            
+            if (param.point === undefined || !param.time || param.point.x < 0 || param.point.x > chartContainerRef.current.clientWidth || param.point.y < 0 || param.point.y > chartContainerRef.current.clientHeight) {
+                tooltipRef.current.style.display = 'none';
+            } else {
+                tooltipRef.current.style.display = 'block';
+                const dataPoint = param.seriesData.get(mainSeries as ISeriesApi<SeriesType>) as CandlestickData<Time> | LineData<Time> | undefined;
+                const volumePoint = volumeSeries ? param.seriesData.get(volumeSeries as ISeriesApi<SeriesType>) as HistogramData<Time> | undefined : null;
+                
+                if (dataPoint) {
+                    const price = 'value' in dataPoint ? dataPoint.value : dataPoint.close;
+                    const vol = volumePoint?.value;
+                    
+                    tooltipRef.current.innerHTML = `
+                        <div class="flex flex-col gap-1">
+                            <div class="text-slate-400 font-bold text-[10px] uppercase tracking-widest">${param.time.toString()}</div>
+                            <div class="flex items-center justify-between gap-4">
+                                <span class="text-white text-lg font-black">${isComparison ? price.toFixed(2) + '%' : '$' + price.toFixed(2)}</span>
+                                ${vol ? `<span class="text-blue-400 font-mono text-xs">V: ${(vol / 1e6).toFixed(1)}M</span>` : ''}
+                            </div>
+                        </div>
+                    `;
+                }
+                
+                const toolWidth = 160;
+                let left = param.point.x + 20;
+                if (left > chartContainerRef.current.clientWidth - toolWidth) {
+                    left = param.point.x - toolWidth - 20;
+                }
+                
+                tooltipRef.current.style.left = left + 'px';
+                tooltipRef.current.style.top = param.point.y + 20 + 'px';
+            }
+        });
 
         // Add Markers
-        if (markers && markers.length > 0) {
+        if (!isComparison && markers && markers.length > 0) {
             const chartMarkers = markers.map(m => ({
-                time: m.date,
-                position: m.type === 'BUY' ? 'belowBar' : 'aboveBar',
+                time: m.date as Time,
+                position: (m.type === 'BUY' ? 'belowBar' : 'aboveBar') as 'belowBar' | 'aboveBar',
                 color: m.type === 'BUY' ? '#10b981' : '#ef4444',
-                shape: m.type === 'BUY' ? 'arrowUp' : 'arrowDown',
+                shape: (m.type === 'BUY' ? 'arrowUp' : 'arrowDown') as 'arrowUp' | 'arrowDown',
                 text: m.type
             }));
-            // @ts-ignore
-            candlestickSeries.setMarkers(chartMarkers);
+            createSeriesMarkers(mainSeries as ISeriesApi<SeriesType>, chartMarkers);
         }
 
         chart.timeScale().fitContent();
@@ -103,9 +221,38 @@ const StockChart: React.FC<StockChartProps> = ({ data, markers }) => {
             window.removeEventListener('resize', handleResize);
             chart.remove();
         };
-    }, [data]);
+    }, [data, isFullscreen, comparisonData, tool, markers]);
 
-    return <div ref={chartContainerRef} className="w-full h-full rounded-xl overflow-hidden border border-slate-700" />;
+    return (
+        <div className={`relative ${isFullscreen ? 'fixed inset-0 z-[200] bg-[#0f172a] p-4' : 'w-full h-full'}`}>
+            <div ref={tooltipRef} className="absolute pointer-events-none p-3 bg-slate-900/90 backdrop-blur-md border border-slate-700 rounded-lg shadow-2xl z-[220] hidden min-w-[140px]" />
+            <div className="absolute top-4 right-4 z-[210] flex gap-2">
+                <div className="flex bg-[#1e293b]/80 backdrop-blur-md rounded-lg border border-slate-700 p-1">
+                    <button 
+                        onClick={() => setTool('pan')}
+                        className={`p-1.5 rounded ${tool === 'pan' ? 'bg-blue-600 text-white' : 'text-slate-400 hover:text-white'}`}
+                        title="Pan Tool"
+                    >
+                        <MousePointer2 size={18} />
+                    </button>
+                    <button 
+                        onClick={() => setTool('line')}
+                        className={`p-1.5 rounded ${tool === 'line' ? 'bg-blue-600 text-white' : 'text-slate-400 hover:text-white'}`}
+                        title="Trendline Tool"
+                    >
+                        <Pencil size={18} />
+                    </button>
+                </div>
+                <button 
+                    onClick={() => setIsFullscreen(!isFullscreen)}
+                    className="p-2 bg-[#1e293b]/80 backdrop-blur-md rounded-lg border border-slate-700 text-slate-400 hover:text-white"
+                >
+                    {isFullscreen ? <Minimize2 size={20} /> : <Maximize2 size={20} />}
+                </button>
+            </div>
+            <div ref={chartContainerRef} className="w-full h-full rounded-xl overflow-hidden border border-slate-700 bg-[#1e293b]" />
+        </div>
+    );
 };
 
 export default StockChart;

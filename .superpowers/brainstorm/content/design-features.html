@@ -1,0 +1,74 @@
+<h2>Section 2: Data Pipeline & Feature Engineering</h2>
+<p class="subtitle">Transforming raw market data into a 30-day sequence for the LSTM</p>
+
+<div class="section">
+    <h3>The 12-Feature Vector</h3>
+    <p class="text-sm text-slate-400 mb-4">Each day in our 30-day sequence will consist of the following features, normalized to a [0, 1] or [-1, 1] range:</p>
+    
+    <div class="grid grid-cols-3 gap-3">
+        <div class="bg-slate-900 p-3 rounded border border-slate-700 text-xs">
+            <span class="text-blue-400 font-bold">1. MA Gap</span><br>Price / 200-day MA
+        </div>
+        <div class="bg-slate-900 p-3 rounded border border-slate-700 text-xs">
+            <span class="text-blue-400 font-bold">2. MA Dist</span><br>abs(1 - MA Gap)
+        </div>
+        <div class="bg-slate-900 p-3 rounded border border-slate-700 text-xs">
+            <span class="text-blue-400 font-bold">3. Rating</span><br>Analyst Score (1-5)
+        </div>
+        <div class="bg-slate-900 p-3 rounded border border-slate-700 text-xs">
+            <span class="text-blue-400 font-bold">4. Momentum</span><br>MA Trend (slope)
+        </div>
+        <div class="bg-slate-900 p-3 rounded border border-slate-700 text-xs">
+            <span class="text-blue-400 font-bold">5. RVOL</span><br>Volume / 30-day Avg
+        </div>
+        <div class="bg-slate-900 p-3 rounded border border-slate-700 text-xs">
+            <span class="text-blue-400 font-bold">6. PEG Ratio</span><br>PE / Growth Rate
+        </div>
+        <div class="bg-slate-900 p-3 rounded border border-slate-700 text-xs">
+            <span class="text-emerald-400 font-bold">7. RSI (14)</span><br>Rel. Strength Index
+        </div>
+        <div class="bg-slate-900 p-3 rounded border border-slate-700 text-xs">
+            <span class="text-emerald-400 font-bold">8. ATR %</span><br>Volatility / Price
+        </div>
+        <div class="bg-slate-900 p-3 rounded border border-slate-700 text-xs">
+            <span class="text-emerald-400 font-bold">9. MACD Hist</span><br>Trend Convergence
+        </div>
+        <div class="bg-slate-900 p-3 rounded border border-slate-700 text-xs">
+            <span class="text-emerald-400 font-bold">10. BB %B</span><br>Bollinger Position
+        </div>
+        <div class="bg-slate-900 p-3 rounded border border-slate-700 text-xs">
+            <span class="text-emerald-400 font-bold">11. Volatility</span><br>20-day Std Dev
+        </div>
+        <div class="bg-slate-900 p-3 rounded border border-slate-700 text-xs">
+            <span class="text-emerald-400 font-bold">12. Sector RS</span><br>Rel. Sector Strength
+        </div>
+    </div>
+</div>
+
+<div class="section">
+    <h3>Preprocessing Workflow</h3>
+    <div class="mockup">
+        <div class="mockup-body">
+            <div class="flex flex-col gap-2 font-mono text-xs">
+                <div class="flex items-center gap-2">
+                    <span class="w-4 h-4 rounded-full bg-blue-500 text-[10px] flex items-center justify-center">1</span>
+                    <span><b>Indicators:</b> Calculate all 12 technicals for every day in the stock's history.</span>
+                </div>
+                <div class="flex items-center gap-2">
+                    <span class="w-4 h-4 rounded-full bg-blue-500 text-[10px] flex items-center justify-center">2</span>
+                    <span><b>Scaling:</b> Apply <i>StandardScaler</i> (z-score) to ensure LSTM stability.</span>
+                </div>
+                <div class="flex items-center gap-2">
+                    <span class="w-4 h-4 rounded-full bg-blue-500 text-[10px] flex items-center justify-center">3</span>
+                    <span><b>Windowing:</b> Group consecutive 30-day blocks into tensors: <code>(Batch, 30, 12)</code>.</span>
+                </div>
+                <div class="flex items-center gap-2">
+                    <span class="w-4 h-4 rounded-full bg-blue-500 text-[10px] flex items-center justify-center">4</span>
+                    <span><b>Labelling:</b> Target is the stock price in 5 trading days.</span>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<p class="mt-4">This expansion adds 5 new professional indicators to our feature set. Does this feature selection and preprocessing flow meet your requirements?</p>
