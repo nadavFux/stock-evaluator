@@ -41,7 +41,7 @@ public class TornadoVmOptimizer implements Optimizer {
     private static final int OPTIMIZATION_RESULT_STRIDE = 5;
     private static final int GRID_TASK_STRIDE = 3;
 
-    private static final int MAX_BATCH_SIZE = 256;
+    private static final int MAX_BATCH_SIZE = 40;
 
     // Simulation Constants
     private static final int DAYS_PER_YEAR = 252;
@@ -96,7 +96,7 @@ public class TornadoVmOptimizer implements Optimizer {
 
             // Initialize multiple starting points (centers) for the search
             int centersCount = (config.centersCount != null) ? config.centersCount : 5;
-            int populationSize = (config.populationSize != null) ? config.populationSize : MAX_BATCH_SIZE * 5;
+            int populationSize = (config.populationSize != null) ? config.populationSize : MAX_BATCH_SIZE * 10;
             int totalGenerations = (config.generations != null) ? config.generations : 12;
 
 
@@ -199,30 +199,34 @@ public class TornadoVmOptimizer implements Optimizer {
                     TornadoExecutionPlan plan = planCache.get(planId);
                     if (plan == null) {
                         TaskGraph graph = new TaskGraph(planId)
-                                // FIX: Added currentGridTask to transferToDevice
-                                .transferToDevice(DataTransferMode.EVERY_EXECUTION, parameterMatrix, subsetIndices, simulationGrid, currentGridTask)
+                                .transferToDevice(DataTransferMode.EVERY_EXECUTION, parameterMatrix, subsetIndices, simulationGrid)
                                 .transferToDevice(DataTransferMode.FIRST_EXECUTION, technicalData, stockOffsets)
                                 .task(planId + "_task", TornadoVmOptimizer::unifiedKernel,
-                                        technicalData, subsetIndices, stockOffsets, parameterMatrix, simulationGrid, currentGridTask, // FIX: Passed to kernel
+                                        technicalData, subsetIndices, stockOffsets, parameterMatrix, simulationGrid,
                                         optimizationResults, subsetSize, totalDays, currentBatchSize, gridCount)
                                 .transferToHost(DataTransferMode.EVERY_EXECUTION, optimizationResults);
                         plan = new TornadoExecutionPlan(graph.snapshot());
                         planCache.put(planId, plan);
                     }
 
-                    // ONE single fast launch per batch
                     plan.execute();
 
+                    // Sum up the 3D expanded array metrics
                     for (int candidateInBatchIdx = 0; candidateInBatchIdx < currentBatchSize; candidateInBatchIdx++) {
                         double totalTrades = 0, totalExcessReturn = 0, totalSqExcessReturn = 0, totalHoldingDays = 0, totalSumTotalExcess = 0;
 
                         for (int sIdx = 0; sIdx < subsetSize; sIdx++) {
-                            int offset = (candidateInBatchIdx * subsetSize + sIdx) * OPTIMIZATION_RESULT_STRIDE;
-                            totalTrades += optimizationResults.get(offset);
-                            totalHoldingDays += optimizationResults.get(offset + 1);
-                            totalExcessReturn += optimizationResults.get(offset + 2);
-                            totalSqExcessReturn += optimizationResults.get(offset + 3);
-                            totalSumTotalExcess += optimizationResults.get(offset + 4);
+                            for (int gIdx = 0; gIdx < gridCount; gIdx++) {
+                                // Reconstruct the 3D index coordinate used by the kernel
+                                int globalIdx = (candidateInBatchIdx * subsetSize * gridCount) + (sIdx * gridCount) + gIdx;
+                                int offset = globalIdx * OPTIMIZATION_RESULT_STRIDE;
+
+                                totalTrades += optimizationResults.get(offset);
+                                totalHoldingDays += optimizationResults.get(offset + 1);
+                                totalExcessReturn += optimizationResults.get(offset + 2);
+                                totalSqExcessReturn += optimizationResults.get(offset + 3);
+                                totalSumTotalExcess += optimizationResults.get(offset + 4);
+                            }
                         }
 
                         double score = calculateCandidateScore(totalTrades, totalExcessReturn, totalSqExcessReturn, totalHoldingDays,
@@ -276,17 +280,23 @@ public class TornadoVmOptimizer implements Optimizer {
      * 100% Branchless implementation for maximum JIT stability and parity with Simulation.java.
      */
     public static void unifiedKernel(FloatArray technicalData, IntArray subsetIndices, IntArray stockOffsets,
-                                     FloatArray parameterMatrix, IntArray simulationGrid, IntArray currentGridTask,
+                                     FloatArray parameterMatrix, IntArray simulationGrid,
                                      FloatArray optimizationResults, int subsetSize, int totalDays, int batchSize, int gridCount) {
 
-        for (@Parallel int globalIdx = 0; globalIdx < batchSize * subsetSize; globalIdx++) {
-            int candidateIdx = globalIdx / subsetSize;
-            int localSubsetIdx = globalIdx % subsetSize;
+        // Thread space expanded to include gridCount
+        for (@Parallel int globalIdx = 0; globalIdx < batchSize * subsetSize * gridCount; globalIdx++) {
+
+            // Deconstruct the 1D globalIdx back into 3D space
+            int gridTaskIdx = globalIdx % gridCount;
+            int remaining = globalIdx / gridCount;
+            int localSubsetIdx = remaining % subsetSize;
+            int candidateIdx = remaining / subsetSize;
 
             int globalStockIdx = subsetIndices.get(localSubsetIdx);
             int stockStartOffset = stockOffsets.get(globalStockIdx);
             int paramBase = candidateIdx * PARAMETER_STRIDE;
 
+            // Load parameters
             float sellCutoff = parameterMatrix.get(paramBase);
             float lowInGap = parameterMatrix.get(paramBase + 1);
             float highInGap = parameterMatrix.get(paramBase + 2);
@@ -314,7 +324,7 @@ public class TornadoVmOptimizer implements Optimizer {
             float weightVolatility = parameterMatrix.get(paramBase + 23);
             float totalWeight = weightGap + weightRev + weightRating + weightMomentum + weightRVol + weightPEG + weightVolatility + 1e-6f;
 
-            int gridTaskIdx = currentGridTask.get(0);
+            // Load Grid Task limits
             int daysLookback = simulationGrid.get(gridTaskIdx * GRID_TASK_STRIDE);
             int searchTimeframe = simulationGrid.get(gridTaskIdx * GRID_TASK_STRIDE + 1);
             int selectionTimeframe = simulationGrid.get(gridTaskIdx * GRID_TASK_STRIDE + 2);
@@ -329,6 +339,7 @@ public class TornadoVmOptimizer implements Optimizer {
             float entryPrice = 0.0f, entryDay = 0.0f;
             float basePSum = (stockStartOffset > 0) ? technicalData.get((globalStockIdx * totalDays + stockStartOffset - 1) * TECH_DATA_STRIDE + 1) : 0.0f;
 
+            // --- SINGLE LEVEL OF NESTING (The Day Loop) ---
             for (int d = simStart; d < finalLimit; d++) {
                 int dayOffset = (globalStockIdx * totalDays + d) * TECH_DATA_STRIDE;
                 float price = technicalData.get(dayOffset);
@@ -443,11 +454,9 @@ public class TornadoVmOptimizer implements Optimizer {
             parameterMatrix = new FloatArray(maxBatchSize * PARAMETER_STRIDE);
         }
 
-        if (currentGridTask == null) currentGridTask = new IntArray(1); // <-- ADD THIS
-
-        // <-- MASSIVELY SHRUNK BUFFER (Removed gridCount multiplier)
-        if (optimizationResults == null || optimizationResults.getSize() < maxBatchSize * maxStocks * OPTIMIZATION_RESULT_STRIDE) {
-            optimizationResults = new FloatArray(maxBatchSize * maxStocks * OPTIMIZATION_RESULT_STRIDE);
+        // Expand the optimization results buffer by gridCount
+        if (optimizationResults == null || optimizationResults.getSize() < maxBatchSize * maxStocks * gridCount * OPTIMIZATION_RESULT_STRIDE) {
+            optimizationResults = new FloatArray(maxBatchSize * maxStocks * gridCount * OPTIMIZATION_RESULT_STRIDE);
         }
 
         if (stockOffsets == null || stockOffsets.getSize() < maxStocks) {
