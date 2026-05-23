@@ -41,7 +41,7 @@ public class TornadoVmOptimizer implements Optimizer {
     private static final int OPTIMIZATION_RESULT_STRIDE = 5;
     private static final int GRID_TASK_STRIDE = 3;
 
-    private static final int MAX_BATCH_SIZE = 64;
+    private static final int MAX_BATCH_SIZE = 20;
 
     // Simulation Constants
     private static final int DAYS_PER_YEAR = 252;
@@ -211,22 +211,20 @@ public class TornadoVmOptimizer implements Optimizer {
 
                     plan.execute();
 
-                    // Sum up the 3D expanded array metrics
+                    // Convert to pure Java primitive array once to avoid JNI cross-boundary GC spikes
+                    float[] javaResults = optimizationResults.toHeapArray();
+
                     for (int candidateInBatchIdx = 0; candidateInBatchIdx < currentBatchSize; candidateInBatchIdx++) {
                         double totalTrades = 0, totalExcessReturn = 0, totalSqExcessReturn = 0, totalHoldingDays = 0, totalSumTotalExcess = 0;
 
+                        // Because the grid is computed internally, we just read 5 floats per stock!
                         for (int sIdx = 0; sIdx < subsetSize; sIdx++) {
-                            for (int gIdx = 0; gIdx < gridCount; gIdx++) {
-                                // Reconstruct the 3D index coordinate used by the kernel
-                                int globalIdx = (candidateInBatchIdx * subsetSize * gridCount) + (sIdx * gridCount) + gIdx;
-                                int offset = globalIdx * OPTIMIZATION_RESULT_STRIDE;
-
-                                totalTrades += optimizationResults.get(offset);
-                                totalHoldingDays += optimizationResults.get(offset + 1);
-                                totalExcessReturn += optimizationResults.get(offset + 2);
-                                totalSqExcessReturn += optimizationResults.get(offset + 3);
-                                totalSumTotalExcess += optimizationResults.get(offset + 4);
-                            }
+                            int offset = (candidateInBatchIdx * subsetSize + sIdx) * OPTIMIZATION_RESULT_STRIDE;
+                            totalTrades += javaResults[offset];
+                            totalHoldingDays += javaResults[offset + 1];
+                            totalExcessReturn += javaResults[offset + 2];
+                            totalSqExcessReturn += javaResults[offset + 3];
+                            totalSumTotalExcess += javaResults[offset + 4];
                         }
 
                         double score = calculateCandidateScore(totalTrades, totalExcessReturn, totalSqExcessReturn, totalHoldingDays,
@@ -283,48 +281,37 @@ public class TornadoVmOptimizer implements Optimizer {
                                      FloatArray parameterMatrix, IntArray simulationGrid,
                                      FloatArray optimizationResults, int subsetSize, int totalDays, int batchSize, int gridCount) {
 
-        // Thread space expanded to include gridCount
-        for (@Parallel int globalIdx = 0; globalIdx < batchSize * subsetSize * gridCount; globalIdx++) {
-
-            // Deconstruct the 1D globalIdx back into 3D space
-            int gridTaskIdx = globalIdx % gridCount;
-            int remaining = globalIdx / gridCount;
-            int localSubsetIdx = remaining % subsetSize;
-            int candidateIdx = remaining / subsetSize;
+        for (@Parallel int globalIdx = 0; globalIdx < batchSize * subsetSize; globalIdx++) {
+            int candidateIdx = globalIdx / subsetSize;
+            int localSubsetIdx = globalIdx % subsetSize;
 
             int globalStockIdx = subsetIndices.get(localSubsetIdx);
             int stockStartOffset = stockOffsets.get(globalStockIdx);
             int paramBase = candidateIdx * PARAMETER_STRIDE;
+            int outputIdx = globalIdx * OPTIMIZATION_RESULT_STRIDE;
 
-            // Load parameters
-            float sellCutoff = parameterMatrix.get(paramBase);
-            float lowInGap = parameterMatrix.get(paramBase + 1);
-            float highInGap = parameterMatrix.get(paramBase + 2);
-            int momentumTimeframe = (int) parameterMatrix.get(paramBase + 3);
-            float aboveAvgMultiplier = parameterMatrix.get(paramBase + 4);
-            int shortLookback = (int) parameterMatrix.get(paramBase + 5);
-            int oscTimeframe = (int) parameterMatrix.get(paramBase + 6);
-            float maxRSI = parameterMatrix.get(paramBase + 7);
-            float minMarketCap = parameterMatrix.get(paramBase + 8);
-            int longAvgTimeframe = (int) parameterMatrix.get(paramBase + 9);
-            float minRateInc = parameterMatrix.get(paramBase + 10);
-            float maxPERatio = parameterMatrix.get(paramBase + 11);
-            float minRatingParam = parameterMatrix.get(paramBase + 12);
-            float maxRatingParam = parameterMatrix.get(paramBase + 13);
-            float maxMarketCap = parameterMatrix.get(paramBase + 14);
-            float dailyRiskFreeRate = parameterMatrix.get(paramBase + 15);
-            float buyThreshold = parameterMatrix.get(paramBase + 16);
+            // Delegate nested loops to helper function to bypass TornadoVM nesting restrictions
+            simulateAllGrids(technicalData, globalStockIdx, stockStartOffset, totalDays,
+                    parameterMatrix, paramBase, simulationGrid, gridCount,
+                    optimizationResults, outputIdx);
+        }
+    }
 
-            float weightGap = parameterMatrix.get(paramBase + 17);
-            float weightRev = parameterMatrix.get(paramBase + 18);
-            float weightRating = parameterMatrix.get(paramBase + 19);
-            float weightMomentum = parameterMatrix.get(paramBase + 20);
-            float weightRVol = parameterMatrix.get(paramBase + 21);
-            float weightPEG = parameterMatrix.get(paramBase + 22);
-            float weightVolatility = parameterMatrix.get(paramBase + 23);
-            float totalWeight = weightGap + weightRev + weightRating + weightMomentum + weightRVol + weightPEG + weightVolatility + 1e-6f;
+    private static void simulateAllGrids(FloatArray technicalData, int globalStockIdx, int stockStartOffset, int totalDays,
+                                         FloatArray parameterMatrix, int paramBase, IntArray simulationGrid, int gridCount,
+                                         FloatArray optimizationResults, int outputIdx) {
 
-            // Load Grid Task limits
+        // Extract ONLY the parameters needed for trade execution to keep the AST size minimal
+        float sellCutoff = parameterMatrix.get(paramBase);
+        int longAvgTimeframe = (int) parameterMatrix.get(paramBase + 9);
+        float dailyRiskFreeRate = parameterMatrix.get(paramBase + 15);
+        float buyThreshold = parameterMatrix.get(paramBase + 16);
+
+        float trades = 0, holdingDays = 0, sumExcess = 0, sumSqExcess = 0, sumTotalExcess = 0;
+        float basePSum = (stockStartOffset > 0) ? technicalData.get((globalStockIdx * totalDays + stockStartOffset - 1) * TECH_DATA_STRIDE + 1) : 0.0f;
+
+        for (int gridTaskIdx = 0; gridTaskIdx < gridCount; gridTaskIdx++) {
+
             int daysLookback = simulationGrid.get(gridTaskIdx * GRID_TASK_STRIDE);
             int searchTimeframe = simulationGrid.get(gridTaskIdx * GRID_TASK_STRIDE + 1);
             int selectionTimeframe = simulationGrid.get(gridTaskIdx * GRID_TASK_STRIDE + 2);
@@ -334,12 +321,9 @@ public class TornadoVmOptimizer implements Optimizer {
             int buyLimit = (simStart + searchTimeframe < totalDays) ? simStart + searchTimeframe : totalDays;
             int finalLimit = (selectionTimeframe > 0) ? ((simStart + searchTimeframe + selectionTimeframe < totalDays) ? simStart + searchTimeframe + selectionTimeframe : totalDays) : totalDays;
 
-            float trades = 0, holdingDays = 0, sumExcess = 0, sumSqExcess = 0, sumTotalExcess = 0;
             int tradingState = 0;
             float entryPrice = 0.0f, entryDay = 0.0f;
-            float basePSum = (stockStartOffset > 0) ? technicalData.get((globalStockIdx * totalDays + stockStartOffset - 1) * TECH_DATA_STRIDE + 1) : 0.0f;
 
-            // --- SINGLE LEVEL OF NESTING (The Day Loop) ---
             for (int d = simStart; d < finalLimit; d++) {
                 int dayOffset = (globalStockIdx * totalDays + d) * TECH_DATA_STRIDE;
                 float price = technicalData.get(dayOffset);
@@ -352,63 +336,19 @@ public class TornadoVmOptimizer implements Optimizer {
                 float movingAvg = (currentSum - prevWindowSum) / (maDivisor > 0 ? maDivisor : 1.0f);
                 movingAvg = (movingAvg < 0.01f) ? price : movingAvg;
 
-                float gap = price / (movingAvg + 1e-6f);
 
-                float currentMaxGap = (technicalData.get(dayOffset + 3) > 4.0f) ? highInGap * aboveAvgMultiplier : highInGap;
-                float vGap = (gap - lowInGap) / (currentMaxGap - lowInGap + 1e-6f);
-                float scoreGap = (1.0f - (vGap < 0 ? 0 : (vGap > 1 ? 1 : vGap))) * (weightGap / totalWeight);
+                float minMarketCap = parameterMatrix.get(paramBase + 8);
+                float maxMarketCap = parameterMatrix.get(paramBase + 14);
+                float mMCap = (technicalData.get(dayOffset + 8) >= minMarketCap && technicalData.get(dayOffset + 8) <= maxMarketCap) ? 1.0f : 0.0f;
 
-                float rating = technicalData.get(dayOffset + 3);
-                float vRating = (rating - minRatingParam) / (maxRatingParam - minRatingParam + 1e-6f);
-                float scoreRating = (vRating < 0 ? 0 : (vRating > 1 ? 1 : vRating)) * (weightRating / totalWeight);
-
-                float rvol = technicalData.get(dayOffset + 4) / (technicalData.get(dayOffset + 5) + 1e-6f);
-                float vRvol = (rvol - 0.5f) / 1.5f;
-                float scoreRVol = (vRvol < 0 ? 0 : (vRvol > 1 ? 1 : vRvol)) * (weightRVol / totalWeight);
-
-                int momStartNow = (d - momentumTimeframe + 1 > stockStartOffset) ? d - momentumTimeframe + 1 : stockStartOffset;
-                float currentMomSum = technicalData.get(dayOffset + 1) - basePSum;
-                float momNowSub = (momStartNow > stockStartOffset) ? (technicalData.get((globalStockIdx * totalDays + (momStartNow - 1)) * TECH_DATA_STRIDE + 1) - basePSum) : 0.0f;
-                float avgPNow = (currentMomSum - momNowSub) / (float) (d - momStartNow + 1);
-
-                int dLookbackMom = (d - momentumTimeframe > stockStartOffset) ? d - momentumTimeframe : stockStartOffset;
-                int momStartThen = (dLookbackMom - momentumTimeframe + 1 > stockStartOffset) ? dLookbackMom - momentumTimeframe + 1 : stockStartOffset;
-                float lookbackMomSum = technicalData.get((globalStockIdx * totalDays + dLookbackMom) * TECH_DATA_STRIDE + 1) - basePSum;
-                float momThenSub = (momStartThen > stockStartOffset) ? (technicalData.get((globalStockIdx * totalDays + (momStartThen - 1)) * TECH_DATA_STRIDE + 1) - basePSum) : 0.0f;
-                float avgPThen = (lookbackMomSum - momThenSub) / (float) (dLookbackMom - momStartThen + 1);
-
-                float momRatio = (avgPThen > 0) ? avgPNow / avgPThen : 1.0f;
-                float macdFactor = (technicalData.get(dayOffset + 9) > 0) ? 1.2f : 0.8f;
-                float vMom = (momRatio - minRateInc) / (minRateInc * 0.3f + 1e-6f);
-                float scoreMom = (vMom < 0 ? 0 : (vMom > 1 ? 1 : vMom)) * macdFactor * (weightMomentum / totalWeight);
-
-                float bbP = technicalData.get(dayOffset + 11);
-                float bollingerFactor = (bbP < 0.2f) ? (1.0f - bbP) : 0.5f;
-                float meanDev = (gap - 1.0f);
-                meanDev = (meanDev < 0 ? -meanDev : meanDev) / 0.20f;
-                float scoreRev = (meanDev < 0 ? 0 : (meanDev > 1 ? 1 : meanDev)) * bollingerFactor * (weightRev / totalWeight);
-
-                float epsCurr = technicalData.get(dayOffset + 6);
-                float epsHist = (d >= stockStartOffset + 250) ? technicalData.get((globalStockIdx * totalDays + (d - 250)) * TECH_DATA_STRIDE + 6) : 0.0f;
-                float epsGrowth = (epsHist > 0.05f && d >= stockStartOffset + 250) ? (epsCurr - epsHist) / epsHist : 0.0f;
-                float pegRatio = (epsGrowth > 0.001f && epsCurr > 0.01f) ? (price / epsCurr) / (epsGrowth * 100.0f) : 2.0f;
-                float vPeg = pegRatio / 2.0f;
-                float scorePeg = (1.0f - (vPeg < 0 ? 0 : (vPeg > 1 ? 1 : vPeg))) * (weightPEG / totalWeight);
-
-                float histVol = technicalData.get(dayOffset + 2);
-                float blendVol = (histVol + (technicalData.get(dayOffset + 10) / (price + 1e-4f))) / 2.0f;
-                float vVol = blendVol / 0.05f;
-                float scoreVol = (1.0f - (vVol < 0 ? 0 : (vVol > 1 ? 1 : vVol))) * (weightVolatility / totalWeight);
-
+                int shortLookback = (int) parameterMatrix.get(paramBase + 5);
                 int shortIdx = (d - shortLookback > stockStartOffset) ? d - shortLookback : stockStartOffset;
                 float oldP = technicalData.get((globalStockIdx * totalDays + shortIdx) * TECH_DATA_STRIDE);
                 float mShort = (d >= stockStartOffset + shortLookback && price < oldP * 0.8f) ? 0.0f : 1.0f;
-                float mMCap = (technicalData.get(dayOffset + 8) >= minMarketCap && technicalData.get(dayOffset + 8) <= maxMarketCap) ? 1.0f : 0.0f;
-                float mRSI = (technicalData.get(dayOffset + 7) <= maxRSI) ? 1.0f : 0.0f;
-
                 float mActive = (d - stockStartOffset >= longAvgTimeframe - 1 && price >= 0.05f) ? 1.0f : 0.0f;
 
-                float heuristic = (scoreGap + scoreRating + scoreRVol + scoreMom + scoreRev + scoreVol) * mMCap * mShort * mActive;
+                // Offload the massive AST node block
+                float heuristic = mMCap * mShort * mActive == 0 ? 0 : calculateHeuristic(technicalData, parameterMatrix, paramBase, dayOffset, globalStockIdx, totalDays, d, stockStartOffset, basePSum, price, movingAvg);
 
                 int doBuy = (tradingState == 0 && d < buyLimit && heuristic > buyThreshold) ? 1 : 0;
                 int doSell = (tradingState == 1 && (price < movingAvg * sellCutoff || d == finalLimit - 1)) ? 1 : 0;
@@ -426,6 +366,7 @@ public class TornadoVmOptimizer implements Optimizer {
                 float dailyExcess = excessLogRet / (dur > 0.1f ? dur : 1.0f);
 
                 int commit = (doSell == 1 && dur > 0.1f) ? 1 : 0;
+
                 trades = (commit == 1) ? trades + 1.0f : trades;
                 holdingDays = (commit == 1) ? holdingDays + dur : holdingDays;
                 sumExcess = (commit == 1) ? sumExcess + excessLogRet : sumExcess;
@@ -433,14 +374,90 @@ public class TornadoVmOptimizer implements Optimizer {
                 sumTotalExcess = (commit == 1) ? sumTotalExcess + tradeLogRet : sumTotalExcess;
                 tradingState = (doSell == 1) ? 0 : tradingState;
             }
-
-            int outputIdx = globalIdx * OPTIMIZATION_RESULT_STRIDE;
-            optimizationResults.set(outputIdx, trades);
-            optimizationResults.set(outputIdx + 1, holdingDays);
-            optimizationResults.set(outputIdx + 2, sumExcess);
-            optimizationResults.set(outputIdx + 3, sumSqExcess);
-            optimizationResults.set(outputIdx + 4, sumTotalExcess);
         }
+
+        optimizationResults.set(outputIdx, trades);
+        optimizationResults.set(outputIdx + 1, holdingDays);
+        optimizationResults.set(outputIdx + 2, sumExcess);
+        optimizationResults.set(outputIdx + 3, sumSqExcess);
+        optimizationResults.set(outputIdx + 4, sumTotalExcess);
+    }
+
+    private static float calculateHeuristic(FloatArray technicalData, FloatArray parameterMatrix, int paramBase,
+                                            int dayOffset, int globalStockIdx, int totalDays, int d, int stockStartOffset,
+                                            float basePSum, float price, float movingAvg) {
+
+        float lowInGap = parameterMatrix.get(paramBase + 1);
+        float highInGap = parameterMatrix.get(paramBase + 2);
+        int momentumTimeframe = (int) parameterMatrix.get(paramBase + 3);
+        float aboveAvgMultiplier = parameterMatrix.get(paramBase + 4);
+        float maxRSI = parameterMatrix.get(paramBase + 7);
+        float minRateInc = parameterMatrix.get(paramBase + 10);
+        float minRatingParam = parameterMatrix.get(paramBase + 12);
+        float maxRatingParam = parameterMatrix.get(paramBase + 13);
+
+        float weightGap = parameterMatrix.get(paramBase + 17);
+        float weightRev = parameterMatrix.get(paramBase + 18);
+        float weightRating = parameterMatrix.get(paramBase + 19);
+        float weightMomentum = parameterMatrix.get(paramBase + 20);
+        float weightRVol = parameterMatrix.get(paramBase + 21);
+        float weightPEG = parameterMatrix.get(paramBase + 22);
+        float weightVolatility = parameterMatrix.get(paramBase + 23);
+        float totalWeight = weightGap + weightRev + weightRating + weightMomentum + weightRVol + weightPEG + weightVolatility + 1e-6f;
+
+        float gap = price / (movingAvg + 1e-6f);
+
+        float currentMaxGap = (technicalData.get(dayOffset + 3) > 4.0f) ? highInGap * aboveAvgMultiplier : highInGap;
+        float vGap = (gap - lowInGap) / (currentMaxGap - lowInGap + 1e-6f);
+        float scoreGap = (1.0f - (vGap < 0 ? 0 : (vGap > 1 ? 1 : vGap))) * (weightGap / totalWeight);
+
+        float rating = technicalData.get(dayOffset + 3);
+        float vRating = (rating - minRatingParam) / (maxRatingParam - minRatingParam + 1e-6f);
+        float scoreRating = (vRating < 0 ? 0 : (vRating > 1 ? 1 : vRating)) * (weightRating / totalWeight);
+
+        float rvol = technicalData.get(dayOffset + 4) / (technicalData.get(dayOffset + 5) + 1e-6f);
+        float vRvol = (rvol - 0.5f) / 1.5f;
+        float scoreRVol = (vRvol < 0 ? 0 : (vRvol > 1 ? 1 : vRvol)) * (weightRVol / totalWeight);
+
+        int momStartNow = (d - momentumTimeframe + 1 > stockStartOffset) ? d - momentumTimeframe + 1 : stockStartOffset;
+        float currentMomSum = technicalData.get(dayOffset + 1) - basePSum;
+        float momNowSub = (momStartNow > stockStartOffset) ? (technicalData.get((globalStockIdx * totalDays + (momStartNow - 1)) * TECH_DATA_STRIDE + 1) - basePSum) : 0.0f;
+        float avgPNow = (currentMomSum - momNowSub) / (float) (d - momStartNow + 1);
+
+        int dLookbackMom = (d - momentumTimeframe > stockStartOffset) ? d - momentumTimeframe : stockStartOffset;
+        int momStartThen = (dLookbackMom - momentumTimeframe + 1 > stockStartOffset) ? dLookbackMom - momentumTimeframe + 1 : stockStartOffset;
+        float lookbackMomSum = technicalData.get((globalStockIdx * totalDays + dLookbackMom) * TECH_DATA_STRIDE + 1) - basePSum;
+        float momThenSub = (momStartThen > stockStartOffset) ? (technicalData.get((globalStockIdx * totalDays + (momStartThen - 1)) * TECH_DATA_STRIDE + 1) - basePSum) : 0.0f;
+        float avgPThen = (lookbackMomSum - momThenSub) / (float) (dLookbackMom - momStartThen + 1);
+
+        float momRatio = (avgPThen > 0) ? avgPNow / avgPThen : 1.0f;
+        float macdFactor = (technicalData.get(dayOffset + 9) > 0) ? 1.2f : 0.8f;
+        float vMom = (momRatio - minRateInc) / (minRateInc * 0.3f + 1e-6f);
+        float scoreMom = (vMom < 0 ? 0 : (vMom > 1 ? 1 : vMom)) * macdFactor * (weightMomentum / totalWeight);
+
+        float bbP = technicalData.get(dayOffset + 11);
+        float bollingerFactor = (bbP < 0.2f) ? (1.0f - bbP) : 0.5f;
+        float meanDev = (gap - 1.0f);
+        meanDev = (meanDev < 0 ? -meanDev : meanDev) / 0.20f;
+        float scoreRev = (meanDev < 0 ? 0 : (meanDev > 1 ? 1 : meanDev)) * bollingerFactor * (weightRev / totalWeight);
+
+        float epsCurr = technicalData.get(dayOffset + 6);
+        float epsHist = (d >= stockStartOffset + 250) ? technicalData.get((globalStockIdx * totalDays + (d - 250)) * TECH_DATA_STRIDE + 6) : 0.0f;
+        float epsGrowth = (epsHist > 0.05f && d >= stockStartOffset + 250) ? (epsCurr - epsHist) / epsHist : 0.0f;
+        float pegRatio = (epsGrowth > 0.001f && epsCurr > 0.01f) ? (price / epsCurr) / (epsGrowth * 100.0f) : 2.0f;
+        float vPeg = pegRatio / 2.0f;
+        float scorePeg = (1.0f - (vPeg < 0 ? 0 : (vPeg > 1 ? 1 : vPeg))) * (weightPEG / totalWeight);
+
+        float histVol = technicalData.get(dayOffset + 2);
+        float blendVol = (histVol + (technicalData.get(dayOffset + 10) / (price + 1e-4f))) / 2.0f;
+        float vVol = blendVol / 0.05f;
+        float scoreVol = (1.0f - (vVol < 0 ? 0 : (vVol > 1 ? 1 : vVol))) * (weightVolatility / totalWeight);
+        float mRSI = (technicalData.get(dayOffset + 7) <= maxRSI) ? 1.0f : 0.0f;
+
+
+        // Note: Kept identical to your original logic (scorePeg is computed but omitted from the final multiplier sum).
+        // Add it into this bracket if that was unintentional in your original base!
+        return (scoreGap + scoreRating + scoreRVol + scoreMom + scoreRev + scoreVol);
     }
 
     private synchronized void preallocateBuffers(int maxStocks, int maxDays) {
@@ -454,9 +471,9 @@ public class TornadoVmOptimizer implements Optimizer {
             parameterMatrix = new FloatArray(maxBatchSize * PARAMETER_STRIDE);
         }
 
-        // Expand the optimization results buffer by gridCount
-        if (optimizationResults == null || optimizationResults.getSize() < maxBatchSize * maxStocks * gridCount * OPTIMIZATION_RESULT_STRIDE) {
-            optimizationResults = new FloatArray(maxBatchSize * maxStocks * gridCount * OPTIMIZATION_RESULT_STRIDE);
+        // Minimal footprint buffer (No gridCount multiplier!)
+        if (optimizationResults == null || optimizationResults.getSize() < maxBatchSize * maxStocks * OPTIMIZATION_RESULT_STRIDE) {
+            optimizationResults = new FloatArray(maxBatchSize * maxStocks * OPTIMIZATION_RESULT_STRIDE);
         }
 
         if (stockOffsets == null || stockOffsets.getSize() < maxStocks) {
