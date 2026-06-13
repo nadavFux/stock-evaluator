@@ -107,10 +107,12 @@ public class TornadoVmOptimizer implements Optimizer {
                 centers.add(new CandidateResult(i == 0 ? configCenter : fallback.randomize(configCenter, 0.7), -100.0, 0.0));
             }
 
+            boolean[] rescueModes = new boolean[centersCount];
             for (int i = 0; i < centersCount; i++) {
                 logger.info("Evaluating Center {}/{}...", i + 1, centersCount);
                 centers.set(i, evaluateCandidate(centers.get(i).params(), dataPkg));
                 logger.info("Center {} Score: {}", i, centers.get(i).score());
+                rescueModes[i] = (centers.get(i).score() == -100.0);
             }
 
             // Iterative refinement (Zoom Optimization)
@@ -123,6 +125,7 @@ public class TornadoVmOptimizer implements Optimizer {
 
                 for (int c = 0; c < centersCount; c++) {
                     CandidateResult currentBest = centers.get(c);
+                    boolean rescue = rescueModes[c];
 
                     List<SimulationParams> population = new ArrayList<>();
                     for (int i = 0; i < populationSize; i++) {
@@ -130,7 +133,7 @@ public class TornadoVmOptimizer implements Optimizer {
                     }
 
                     // Stage 1: Broad discovery on a subset of stocks
-                    List<CandidateResult> discovery = evaluateGpu2D(population, gpuSubset, dataPkg, false);
+                    List<CandidateResult> discovery = evaluateGpu2D(population, gpuSubset, dataPkg, rescue);
                     List<SimulationParams> elites = discovery.stream()
                             .sorted(Comparator.comparingDouble(CandidateResult::score).reversed())
                             .limit(100)
@@ -139,7 +142,7 @@ public class TornadoVmOptimizer implements Optimizer {
 
                     // Stage 2: Rigorous validation of elites on all stocks
                     IntArray allStockIndices = IntArray.fromArray(java.util.stream.IntStream.range(0, dataPkg.stockCount).toArray());
-                    List<CandidateResult> validation = evaluateGpu2D(elites, allStockIndices, dataPkg, false);
+                    List<CandidateResult> validation = evaluateGpu2D(elites, allStockIndices, dataPkg, rescue);
                     CandidateResult bestInGeneration = validation.stream()
                             .max(Comparator.comparingDouble(CandidateResult::score))
                             .orElse(currentBest);
@@ -147,6 +150,10 @@ public class TornadoVmOptimizer implements Optimizer {
                     // Tie-breaking: Update center if score is better OR if score is similar but trade count/gain is higher
                     if (bestInGeneration.score() > currentBest.score() + 0.001 ||
                             (Math.abs(bestInGeneration.score() - currentBest.score()) < 0.001 && bestInGeneration.yearlyGain() > currentBest.yearlyGain())) {
+                        if (rescue && bestInGeneration.score() > -90.0) {
+                            rescueModes[c] = false;
+                            logger.info("Center {} Exited Rescue Mode with score: {}", c, bestInGeneration.score());
+                        }
                         centers.set(c, bestInGeneration);
                         logger.info("Center %d Improved: %.2f | AvgReturn: %.2f%%".formatted(
                                 c, bestInGeneration.score(), bestInGeneration.yearlyGain()));
