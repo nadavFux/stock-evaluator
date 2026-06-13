@@ -42,7 +42,7 @@ public class TornadoVmOptimizer implements Optimizer {
     private static final int OPTIMIZATION_RESULT_STRIDE = 5;
     private static final int GRID_TASK_STRIDE = 3;
 
-    private static final int MAX_BATCH_SIZE = 30;
+    private static final int MAX_BATCH_SIZE = 140;
 
     // Simulation Constants
     private static final int DAYS_PER_YEAR = 252;
