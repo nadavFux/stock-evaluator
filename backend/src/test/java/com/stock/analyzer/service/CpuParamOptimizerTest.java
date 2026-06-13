@@ -28,8 +28,8 @@ public class CpuParamOptimizerTest {
         
         for (int i = 0; i < 50; i++) {
             SimulationParams p = optimizer.randomize(center, 0.2);
-            assertWithin(p.sellCutOffPerc(), 0.1, 0.99, "sellCutOffPerc");
-            assertWithin(p.buyThreshold(), 0.4, 0.95, "buyThreshold");
+            assertWithin(p.sellCutOffPerc(), 0.75, 0.995, "sellCutOffPerc");
+            assertWithin(p.buyThreshold(), 0.30, 0.90, "buyThreshold");
             assertTrue(p.longMovingAvgTime() >= 10, "longMovingAvgTime too small");
         }
     }

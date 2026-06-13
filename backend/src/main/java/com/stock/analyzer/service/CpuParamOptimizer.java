@@ -255,24 +255,31 @@ public class CpuParamOptimizer implements Optimizer {
     }
 
     public SimulationParams randomize(SimulationParams c, double r) {
+        double lowerGap = clamp(c.lowerPriceToLongAvgBuyIn() + rand(0.80 * r), 0.40, 1.20);
+        double higherGap = clamp(c.higherPriceToLongAvgBuyIn() + rand(1.0 * r), lowerGap + 0.02, 1.60);
+        double sellCutoff = clamp(c.sellCutOffPerc() + rand(0.245 * r), 0.75, 0.995);
+
+        double minR = clamp(c.minRating() + rand(3.5 * r), 1.0, 4.5);
+        double maxR = clamp(c.maxRating() + rand(3.0 * r), minR + 0.1, 5.0);
+
         return new SimulationParams(
-                clamp(c.sellCutOffPerc() + rand(r), 0.1, 0.99),
-                clamp(c.lowerPriceToLongAvgBuyIn() + rand(r), 0.1, 2.0),
-                clamp(c.higherPriceToLongAvgBuyIn() + rand(r), 0.1, 3.0),
-                clampInt(c.timeFrameForUpwardLongAvg() + randInt((int) (20 * r)), 2, 500),
-                clamp(c.aboveAvgRatingPricePerc() + rand(r), 0.1, 5.0),
-                clampInt(c.timeFrameForUpwardShortPrice() + randInt((int) (20 * r)), 1, 100),
-                clampInt(c.timeFrameForOscillator() + randInt((int) (100 * r)), 2, 500),
-                clamp(c.maxRSI() + rand(20 * r), 0.0, 100.0),
-                Math.max(0, c.minMarketCap() * (1 + rand(2 * r))),
-                clampInt(c.longMovingAvgTime() + randInt((int) (100 * r)), 10, 1000),
-                clamp(c.minRateOfAvgInc() + rand(r), 0.0, 5.0),
-                clampInt(c.maxPERatio() + randInt((int) (50 * r)), 0, 1000),
-                clamp(c.minRating() + rand(4 * r), 0.0, 4.9),
-                clamp(c.maxRating() + rand(4 * r), 3.0, 5.0),
-                Math.max(1000, c.maxMarketCap() * (1 + rand(2 * r))),
+                sellCutoff,
+                lowerGap,
+                higherGap,
+                clampInt(c.timeFrameForUpwardLongAvg() + randInt((int) (240 * r)), 10, 250),
+                clamp(c.aboveAvgRatingPricePerc() + rand(0.90 * r), 0.90, 1.80),
+                clampInt(c.timeFrameForUpwardShortPrice() + randInt((int) (19)), 1, 20),
+                clampInt(c.timeFrameForOscillator() + randInt((int) (190 * r)), 1, 200),
+                clamp(c.maxRSI() + rand(55.0 * r), 30.0, 85.0),
+                Math.max(10, c.minMarketCap() * (1 + rand(r))), // Proportional multiplier
+                clampInt(c.longMovingAvgTime() + randInt((int) (240 * r)), 10, 250),
+                clamp(c.minRateOfAvgInc() + rand(0.50 * r), 0.90, 1.40),
+                clampInt(c.maxPERatio() + randInt((int) (145 * r)), 5, 150),
+                minR,
+                maxR,
+                Math.max(1000, c.maxMarketCap() * (1 + rand(r))), // Proportional multiplier
                 c.riskFreeRate(),
-                clamp(c.buyThreshold() + rand(r), 0.4, 0.95),
+                clamp(c.buyThreshold() + rand(0.60 * r), 0.30, 0.90),
                 clamp(c.movingAvgGapWeight() + rand(r), 0.0, 1.0),
                 clamp(c.reversionToMeanWeight() + rand(r), 0.0, 1.0),
                 clamp(c.ratingWeight() + rand(r), 0.0, 1.0),

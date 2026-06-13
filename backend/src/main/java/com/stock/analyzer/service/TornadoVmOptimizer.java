@@ -261,7 +261,7 @@ public class TornadoVmOptimizer implements Optimizer {
 
         // Relaxed trade density requirements (Consistent with Simulation.java)
         // Ignore gridCount to avoid constant -100 on small datasets.
-        double minRequiredTrades = Math.max(50, (double) subsetSize * gridCount / 1000.0);
+        double minRequiredTrades = Math.max(50, (double) subsetSize * gridCount / 100.0);
         if (trades < minRequiredTrades || totalHoldingDays < minRequiredTrades * 2.0) return -100.0;
 
         // excess is sum(dailyExcess * dur) = sum(excessLogRet)
