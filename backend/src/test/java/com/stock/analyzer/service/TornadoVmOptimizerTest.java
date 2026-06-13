@@ -211,6 +211,36 @@ public class TornadoVmOptimizerTest {
     }
 
 
+    @Test
+    public void testOptimizeValidationStageDoesNotUseRescue() {
+        config.centersCount = 1;
+        config.populationSize = 2;
+        config.generations = 1;
+        config.buyThreshold = new ArrayList<>(List.of(0.85)); // Force rescue mode
+
+        List<Boolean> rescueFlags = new ArrayList<>();
+        TornadoVmOptimizer optimizer = new TornadoVmOptimizer(config) {
+            @Override
+            List<Optimizer.CandidateResult> evaluateGpu2D(List<SimulationParams> candidates, IntArray currentSubsetIdx, SimulationDataPackage pkg, boolean rescue) {
+                rescueFlags.add(rescue);
+                return super.evaluateGpu2D(candidates, currentSubsetIdx, pkg, rescue);
+            }
+        };
+
+        List<StockGraphState> stocks = generateSyntheticStocks(2, 150);
+        optimizer.optimize(stocks);
+
+        // Call sequence of evaluateGpu2D:
+        // 1. evaluateCandidate (initial evaluation of center) -> rescue = false
+        // 2. Stage 1 (discovery) -> rescue = true (since center score was -100.0)
+        // 3. Stage 2 (validation) -> rescue MUST be false!
+        assertTrue(rescueFlags.size() >= 3, "evaluateGpu2D should be called at least 3 times");
+        assertFalse(rescueFlags.get(0), "Initial evaluation should not use rescue");
+        assertTrue(rescueFlags.get(1), "Discovery stage should use rescue when center is in rescue mode");
+        assertFalse(rescueFlags.get(2), "Validation stage must NOT use rescue even when center is in rescue mode");
+    }
+
+
     public static List<StockGraphState> generateSyntheticStocks(int count, int days) {
         java.util.Random rand = new java.util.Random(42); // Fixed seed
         List<StockGraphState> stocks = new ArrayList<>();

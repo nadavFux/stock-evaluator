@@ -142,7 +142,7 @@ public class TornadoVmOptimizer implements Optimizer {
 
                     // Stage 2: Rigorous validation of elites on all stocks
                     IntArray allStockIndices = IntArray.fromArray(java.util.stream.IntStream.range(0, dataPkg.stockCount).toArray());
-                    List<CandidateResult> validation = evaluateGpu2D(elites, allStockIndices, dataPkg, rescue);
+                    List<CandidateResult> validation = evaluateGpu2D(elites, allStockIndices, dataPkg, false);
                     CandidateResult bestInGeneration = validation.stream()
                             .max(Comparator.comparingDouble(CandidateResult::score))
                             .orElse(currentBest);
