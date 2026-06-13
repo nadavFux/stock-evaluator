@@ -211,12 +211,15 @@ public class Simulation {
     }
 
     public double calculateScore(long totalEvaluations) {
-        this.yearlyGain = 0; // Ignore as requested
-        if (tradeCount < 2) return -100.0;
+        if (tradeCount < 2) {
+            this.yearlyGain = 0.0;
+            return -100.0;
+        }
 
         double sumExcess = 0.0;
         double sumSqExcess = 0.0;
         double totalHoldingDays = 0.0;
+        double sumLogRet = 0.0;
 
         double dailyRiskFreeRate = Math.pow(1.0 + params.riskFreeRate(), 1.0 / 252.0) - 1.0;
 
@@ -235,7 +238,10 @@ public class Simulation {
             sumExcess += excessLogRet;
             sumSqExcess += dailyExcess * dailyExcess * dur;
             totalHoldingDays += dur;
+            sumLogRet += tradeLogRet;
         }
+
+        this.yearlyGain = (Math.exp(sumLogRet / tradeCount) - 1.0) * 100.0;
 
         if (totalHoldingDays < 2.0) return -100.0;
 

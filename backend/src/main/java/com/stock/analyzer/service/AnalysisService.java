@@ -122,12 +122,14 @@ public class AnalysisService {
                     for (int i = pkg.daysCount - backtestDays; i < pkg.daysCount; i++) {
                         if (sim.calculateHeuristic(pkg, sIdx, i) > params.buyThreshold()) {
                             double buyPrice = pkg.closePrices[sIdx][i];
+                            double highestPrice = buyPrice;
                             for (int j = 1; i + j < pkg.daysCount; j++) {
                                 int curr = i + j;
-                                double ma = pkg.getAvg(sIdx, curr, params.longMovingAvgTime());
-                                if (pkg.closePrices[sIdx][curr] < (ma * params.sellCutOffPerc()) || curr == pkg.daysCount - 1) {
-                                    double gain = (pkg.closePrices[sIdx][curr] - buyPrice) / buyPrice;
-                                    allTrades.add(new StockTrade(pkg.tickers[sIdx], gain, pkg.daysCount - i, j, pkg.closePrices[sIdx][curr], pkg.caps[sIdx][curr], pkg.dates[sIdx][i]));
+                                double price = pkg.closePrices[sIdx][curr];
+                                highestPrice = Math.max(highestPrice, price);
+                                if (price < (highestPrice * params.sellCutOffPerc()) || curr == pkg.daysCount - 1) {
+                                    double gain = (price - buyPrice) / buyPrice;
+                                    allTrades.add(new StockTrade(pkg.tickers[sIdx], gain, pkg.daysCount - i, j, price, pkg.caps[sIdx][curr], pkg.dates[sIdx][i]));
                                     i = curr;
                                     break;
                                 }
