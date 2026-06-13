@@ -186,6 +186,8 @@ public class TornadoVmOptimizerTest {
         // Test 1: Standard Evaluation Parity
         List<Optimizer.CandidateResult> gpuResults = gpuOptimizer.evaluateGpu2D(List.of(params), subsetGpu, pkg, false);
         List<Optimizer.CandidateResult> cpuResults = cpuOptimizer.evaluateParallel(List.of(params), subsetCpu, pkg, false);
+        List<Optimizer.CandidateResult> gpuRescueResults = gpuOptimizer.evaluateGpu2D(List.of(params), subsetGpu, pkg, true);
+        List<Optimizer.CandidateResult> cpuRescueResults = cpuOptimizer.evaluateParallel(List.of(params), subsetCpu, pkg, true);
 
         assertNotNull(gpuResults);
         assertNotNull(cpuResults);
@@ -194,28 +196,18 @@ public class TornadoVmOptimizerTest {
 
         double gpuScore = gpuResults.get(0).score();
         double cpuScore = cpuResults.get(0).score();
-
-        System.out.println("GPU Score (Standard): " + gpuScore);
-        System.out.println("CPU Score (Standard): " + cpuScore);
-
-        assertEquals(cpuScore, gpuScore, 0.001, "GPU and CPU standard scores should be within 0.001 of each other");
-
-        // Test 2: Rescue Mode (Trade Count) Parity
-        List<Optimizer.CandidateResult> gpuRescueResults = gpuOptimizer.evaluateGpu2D(List.of(params), subsetGpu, pkg, true);
-        List<Optimizer.CandidateResult> cpuRescueResults = cpuOptimizer.evaluateParallel(List.of(params), subsetCpu, pkg, true);
-
-        assertNotNull(gpuRescueResults);
-        assertNotNull(cpuRescueResults);
-        assertEquals(1, gpuRescueResults.size());
-        assertEquals(1, cpuRescueResults.size());
-
         double gpuRescueScore = gpuRescueResults.get(0).score();
         double cpuRescueScore = cpuRescueResults.get(0).score();
 
-        System.out.println("GPU Rescue Score (Trade Count): " + (gpuRescueScore + 100.0));
-        System.out.println("CPU Rescue Score (Trade Count): " + (cpuRescueScore + 100.0));
+        System.out.println("=== DIAGNOSTIC PARITY REPORT ===");
+        System.out.println("GPU Score (Standard): " + gpuScore);
+        System.out.println("CPU Score (Standard): " + cpuScore);
+        System.out.println("GPU Trades (Rescue Score + 100): " + (gpuRescueScore + 100.0));
+        System.out.println("CPU Trades (Rescue Score + 100): " + (cpuRescueScore + 100.0));
+        System.out.println("=================================");
 
         assertEquals(cpuRescueScore, gpuRescueScore, 0.001, "GPU and CPU trade counts should be exactly equal");
+        assertEquals(cpuScore, gpuScore, 0.001, "GPU and CPU standard scores should be within 0.001 of each other");
     }
 
 

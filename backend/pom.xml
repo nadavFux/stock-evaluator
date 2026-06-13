@@ -218,7 +218,7 @@
                 <artifactId>spring-boot-maven-plugin</artifactId>
                 <configuration>
                     <jvmArguments>
-                        @${tornado.argfile} --enable-preview --enable-native-access=ALL-UNNAMED -Dtornado.sdk.root=${tornado.root} -Djava.library.path=${tornado.root}/lib
+                        @${tornado.argfile} --enable-preview --enable-native-access=ALL-UNNAMED -Dtornado.sdk.root=${tornado.root} -Djava.library.path=${tornado.root}/lib -Dtornado.print.kernel=true -da
                     </jvmArguments>
                 </configuration>
             </plugin>

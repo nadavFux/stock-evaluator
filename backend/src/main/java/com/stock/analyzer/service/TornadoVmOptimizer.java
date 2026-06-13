@@ -13,6 +13,7 @@ import uk.ac.manchester.tornado.api.enums.DataTransferMode;
 import uk.ac.manchester.tornado.api.enums.TornadoVMBackendType;
 import uk.ac.manchester.tornado.api.types.arrays.FloatArray;
 import uk.ac.manchester.tornado.api.types.arrays.IntArray;
+import uk.ac.manchester.tornado.api.math.TornadoMath;
 
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
@@ -35,14 +36,13 @@ public class TornadoVmOptimizer implements Optimizer {
     private static IntArray stockOffsets;
     private static IntArray subsetIndices;
     private static IntArray simulationGrid;
-    private static IntArray currentGridTask; // <-- ADD THIS
     // Buffer Strides and Layout Constants
     private static final int TECH_DATA_STRIDE = 12;
     private static final int PARAMETER_STRIDE = 24;
     private static final int OPTIMIZATION_RESULT_STRIDE = 5;
     private static final int GRID_TASK_STRIDE = 3;
 
-    private static final int MAX_BATCH_SIZE = 20;
+    private static final int MAX_BATCH_SIZE = 30;
 
     // Simulation Constants
     private static final int DAYS_PER_YEAR = 252;
@@ -97,8 +97,8 @@ public class TornadoVmOptimizer implements Optimizer {
 
             // Initialize multiple starting points (centers) for the search
             int centersCount = (config.centersCount != null) ? config.centersCount : 5;
-            int populationSize = (config.populationSize != null) ? config.populationSize : MAX_BATCH_SIZE * 15;
-            int totalGenerations = (config.generations != null) ? config.generations : 12;
+            int populationSize = (config.populationSize != null) ? config.populationSize : 280;
+            int totalGenerations = (config.generations != null) ? config.generations : 8;
 
 
             List<CandidateResult> centers = new ArrayList<>();
@@ -184,20 +184,20 @@ public class TornadoVmOptimizer implements Optimizer {
             int subsetSize = currentSubsetIdx.getSize();
             int totalDays = pkg.daysCount;
             int gridCount = config.startTimes.size() * config.searchTimes.size() * config.selectTimes.size();
-            int batchSize = MAX_BATCH_SIZE;
+            int maxBatchSize = MAX_BATCH_SIZE;
+            int maxStocks = pkg.stockCount;
             List<CandidateResult> resultsList = new ArrayList<>();
 
             for (int i = 0; i < subsetSize; i++) subsetIndices.set(i, currentSubsetIdx.get(i));
 
-            for (int start = 0; start < populationSize; start += batchSize) {
-                int currentBatchSize = Math.min(batchSize, populationSize - start);
+            for (int start = 0; start < populationSize; start += maxBatchSize) {
+                int currentBatchSize = Math.min(maxBatchSize, populationSize - start);
                 for (int i = 0; i < currentBatchSize; i++) {
                     mapParamsToFloatArray(candidates.get(start + i), parameterMatrix, i * PARAMETER_STRIDE);
                 }
 
                 try {
-
-                    String planId = "unified_s" + subsetSize + "_d" + totalDays + "_b" + currentBatchSize;
+                    String planId = "unified_maxS" + maxStocks + "_d" + totalDays + "_maxB" + maxBatchSize + "_g" + gridCount;
                     TornadoExecutionPlan plan = planCache.get(planId);
                     if (plan == null) {
                         TaskGraph graph = new TaskGraph(planId)
@@ -205,12 +205,12 @@ public class TornadoVmOptimizer implements Optimizer {
                                 .transferToDevice(DataTransferMode.FIRST_EXECUTION, technicalData, stockOffsets)
                                 .task(planId + "_task", TornadoVmOptimizer::unifiedKernel,
                                         technicalData, subsetIndices, stockOffsets, parameterMatrix, simulationGrid,
-                                        optimizationResults, subsetSize, totalDays, currentBatchSize, gridCount, currentBatchSize * subsetSize)
+                                        optimizationResults, maxStocks, totalDays, maxBatchSize, gridCount, maxBatchSize * maxStocks * gridCount,
+                                        subsetSize, currentBatchSize)
                                 .transferToHost(DataTransferMode.EVERY_EXECUTION, optimizationResults);
                         plan = new TornadoExecutionPlan(graph.snapshot());
                         planCache.put(planId, plan);
                     }
-                    plan.withCompilerFlags(TornadoVMBackendType.OPENCL, "-cl-opt-disable");
                     plan.execute();
 
                     // Convert to pure Java primitive array once to avoid JNI cross-boundary GC spikes
@@ -219,14 +219,16 @@ public class TornadoVmOptimizer implements Optimizer {
                     for (int candidateInBatchIdx = 0; candidateInBatchIdx < currentBatchSize; candidateInBatchIdx++) {
                         double totalTrades = 0, totalExcessReturn = 0, totalSqExcessReturn = 0, totalHoldingDays = 0, totalSumTotalExcess = 0;
 
-                        // Because the grid is computed internally, we just read 5 floats per stock!
+                        // Sum the results across all stocks in the subset and all grid configurations
                         for (int sIdx = 0; sIdx < subsetSize; sIdx++) {
-                            int offset = (candidateInBatchIdx * subsetSize + sIdx) * OPTIMIZATION_RESULT_STRIDE;
-                            totalTrades += javaResults[offset];
-                            totalHoldingDays += javaResults[offset + 1];
-                            totalExcessReturn += javaResults[offset + 2];
-                            totalSqExcessReturn += javaResults[offset + 3];
-                            totalSumTotalExcess += javaResults[offset + 4];
+                            for (int gridTaskIdx = 0; gridTaskIdx < gridCount; gridTaskIdx++) {
+                                int offset = ((candidateInBatchIdx * maxStocks + sIdx) * gridCount + gridTaskIdx) * OPTIMIZATION_RESULT_STRIDE;
+                                totalTrades += javaResults[offset];
+                                totalHoldingDays += javaResults[offset + 1];
+                                totalExcessReturn += javaResults[offset + 2];
+                                totalSqExcessReturn += javaResults[offset + 3];
+                                totalSumTotalExcess += javaResults[offset + 4];
+                            }
                         }
 
                         double score = calculateCandidateScore(totalTrades, totalExcessReturn, totalSqExcessReturn, totalHoldingDays,
@@ -238,7 +240,7 @@ public class TornadoVmOptimizer implements Optimizer {
                 } catch (Exception e) {
                     logger.error("GPU evaluation failed: {}", e.getMessage(), e);
                     List<SimulationParams> failed = candidates.subList(start, populationSize);
-                    resultsList.addAll(fallback.evaluateParallel(failed, toList(subsetIndices), pkg, rescue));
+                    resultsList.addAll(fallback.evaluateParallel(failed, toList(currentSubsetIdx), pkg, rescue));
                     return resultsList;
                 }
             }
@@ -252,8 +254,8 @@ public class TornadoVmOptimizer implements Optimizer {
 
         // Relaxed trade density requirements (Consistent with Simulation.java)
         // Ignore gridCount to avoid constant -100 on small datasets.
-        double minRequiredTrades = Math.max(50, (double) subsetSize * gridCount / 1000.0);
-        if (trades < minRequiredTrades || trades < 2 || totalHoldingDays < 2.0) return -100.0;
+        double minRequiredTrades = Math.max(50, (double) subsetSize * gridCount / 100.0);
+        if (trades < minRequiredTrades || totalHoldingDays < minRequiredTrades * 2.0) return -100.0;
 
         // excess is sum(dailyExcess * dur) = sum(excessLogRet)
         // sqExcess is sum(dailyExcess^2 * dur)
@@ -281,15 +283,21 @@ public class TornadoVmOptimizer implements Optimizer {
      */
     public static void unifiedKernel(FloatArray technicalData, IntArray subsetIndices, IntArray stockOffsets,
                                      FloatArray parameterMatrix, IntArray simulationGrid,
-                                     FloatArray optimizationResults, int subsetSize, int totalDays, int batchSize, int gridCount, int totalElements) {
+                                     FloatArray optimizationResults, int maxStocks, int totalDays, int maxBatchSize, int gridCount, int totalElements,
+                                     int activeSubsetSize, int activeBatchSize) {
 
         for (@Parallel int globalIdx = 0; globalIdx < totalElements; globalIdx++) {
-            int candidateIdx = globalIdx / subsetSize;
-            int localSubsetIdx = globalIdx % subsetSize;
+            int candidateIdx = globalIdx / (maxStocks * gridCount);
+            int rem = globalIdx % (maxStocks * gridCount);
+            int localSubsetIdx = rem / gridCount;
+            int gridTaskIdx = rem % gridCount;
 
-            int globalStockIdx = subsetIndices.get(localSubsetIdx);
+            int isThreadActive = (candidateIdx < activeBatchSize && localSubsetIdx < activeSubsetSize) ? 1 : 0;
+
+            int safeSubsetIdx = (isThreadActive == 1) ? localSubsetIdx : 0;
+            int globalStockIdx = subsetIndices.get(safeSubsetIdx);
             int stockStartOffset = stockOffsets.get(globalStockIdx);
-            int paramBase = candidateIdx * PARAMETER_STRIDE;
+            int paramBase = ((isThreadActive == 1) ? candidateIdx : 0) * PARAMETER_STRIDE;
             int outputIdx = globalIdx * OPTIMIZATION_RESULT_STRIDE;
 
             optimizationResults.set(outputIdx, 0.0f);
@@ -333,171 +341,171 @@ public class TornadoVmOptimizer implements Optimizer {
             int momTf = (int) parameterMatrix.get(paramBase + 3);
             float minRate = parameterMatrix.get(paramBase + 10);
 
-            for (int gridTaskIdx = 0; gridTaskIdx < gridCount; gridTaskIdx++) {
-                int gridBase = gridTaskIdx * GRID_TASK_STRIDE;
-                int daysLookback = simulationGrid.get(gridBase);
-                int searchTimeframe = simulationGrid.get(gridBase + 1);
-                int selectionTimeframe = simulationGrid.get(gridBase + 2);
+            int gridBase = gridTaskIdx * GRID_TASK_STRIDE;
+            int daysLookback = simulationGrid.get(gridBase);
+            int searchTimeframe = simulationGrid.get(gridBase + 1);
+            int selectionTimeframe = simulationGrid.get(gridBase + 2);
 
-                int simStart = totalDays - daysLookback;
-                simStart = (simStart < 0) ? 0 : simStart;
+            int simStart = totalDays - daysLookback;
+            simStart = (simStart < 0) ? 0 : simStart;
+            
+            // Match CPU search window logic exactly:
+            int buyLimit = simStart + searchTimeframe;
+            buyLimit = (buyLimit > totalDays) ? totalDays : buyLimit;
+
+            int finalLimit = totalDays;
+            int proposedLimit = simStart + searchTimeframe + selectionTimeframe;
+            proposedLimit = (proposedLimit > totalDays) ? totalDays : proposedLimit;
+            finalLimit = (selectionTimeframe > 0) ? proposedLimit : totalDays;
+
+            int minStart = stockStartOffset + longAvgTimeframe - 1;
+
+            int tradingState = 0;
+            float entryPrice = 0.0f, entryDay = 0.0f;
+            float trades = 0, holdingDays = 0, sumExcess = 0, sumSqExcess = 0, sumTotalExcess = 0;
+
+            for (int d = simStart; d < finalLimit; d++) {
+                int dayOffset = (stockBaseIndex + d) * TECH_DATA_STRIDE;
+                float price = technicalData.get(dayOffset);
+
+                // inline shouldSkip (mActive requires d >= minStart)
+                float cap = technicalData.get(dayOffset + 8);
+                float condCapMin = (cap >= minMarketCap) ? 1.0f : 0.0f;
+                float condCapMax = (cap <= maxMarketCap) ? 1.0f : 0.0f;
+
+                int shortIdx = Math.max(d - shortLookback, stockStartOffset);
+                float oldP = technicalData.get((globalStockIdx * totalDays + shortIdx) * TECH_DATA_STRIDE);
+                float condShort1 = (d >= stockStartOffset + shortLookback) ? 1.0f : 0.0f;
+                float condShort2 = (price < oldP * 0.8f) ? 1.0f : 0.0f;
+                float mShort = (condShort1 * condShort2 == 1.0f) ? 0.0f : 1.0f;
+
+                float condPrice = (price >= 0.05f) ? 1.0f : 0.0f;
+                float condMinStart = (d >= minStart) ? 1.0f : 0.0f;
+
+                float isActive = condCapMin * condCapMax * mShort * condPrice * condMinStart * (float) isThreadActive;
+                int shouldSkip = (int) (1.0f - isActive);
+
+                float heuristic = 0.0f;
                 
-                // Match CPU shouldSkip early exit condition:
-                // dIdx - pkg.offsets[sIdx] < params.longMovingAvgTime() - 1
-                int minStart = stockStartOffset + longAvgTimeframe - 1;
-                simStart = (simStart < minStart) ? minStart : simStart;
+                // inline getMovingAverage
+                int maStart = Math.max(d - longAvgTimeframe + 1, stockStartOffset);
+                float maDivisor = Math.max((float) (d - maStart + 1), 1.0f);
 
-                int buyLimit = simStart + searchTimeframe;
-                buyLimit = (buyLimit > totalDays) ? totalDays : buyLimit;
+                float currentSum = technicalData.get(dayOffset + 1) - basePSum;
+                
+                // Short-circuit boundary checks in sequential fallback mode using ternaries:
+                float prevWindowSum = (maStart > stockStartOffset) ? (technicalData.get((stockBaseIndex + maStart - 1) * TECH_DATA_STRIDE + 1) - basePSum) : 0.0f;
+                float movingAvg = (currentSum - prevWindowSum) / maDivisor;
+                movingAvg = (movingAvg < 0.01f) ? price : movingAvg;
 
-                int finalLimit = totalDays;
-                int proposedLimit = simStart + searchTimeframe + selectionTimeframe;
-                proposedLimit = (proposedLimit > totalDays) ? totalDays : proposedLimit;
-                finalLimit = (selectionTimeframe > 0) ? proposedLimit : totalDays;
+                float gap = price / (movingAvg + 1e-6f);
 
-                int tradingState = 0;
-                float entryPrice = 0.0f, entryDay = 0.0f;
-                float trades = 0, holdingDays = 0, sumExcess = 0, sumSqExcess = 0, sumTotalExcess = 0;
+                // inline calcGapScore
+                float rating = technicalData.get(dayOffset + 3);
+                float isGreater = (rating > 4.0f) ? 1.0f : 0.0f;
+                float currentMaxGap = isGreater * (maHigher * aboveAvgRatingPricePerc) + (1.0f - isGreater) * maHigher;
+                float vGap = (gap - maLower) / (currentMaxGap - maLower + 1e-6f);
+                vGap = Math.max(0.0f, Math.min(1.0f, vGap));
+                float scoreGap = (1.0f - vGap) * gapWeight;
 
-                for (int d = simStart; d < finalLimit; d++) {
-                    int dayOffset = (stockBaseIndex + d) * TECH_DATA_STRIDE;
-                    float price = technicalData.get(dayOffset);
+                // inline calcBaseScore's rating component
+                float isGreaterR = (maxR > minR) ? 1.0f : 0.0f;
+                float vRating = isGreaterR * ((rating - minR) / (maxR - minR + 1e-6f)) + (1.0f - isGreaterR) * 1.0f;
+                vRating = Math.max(0.0f, Math.min(1.0f, vRating));
+                float scoreRating = vRating * ratingWeight;
 
-                    // inline shouldSkip (mActive is true because d >= simStart >= stockStartOffset + longAvgTimeframe - 1)
-                    float cap = technicalData.get(dayOffset + 8);
-                    float condCapMin = (cap >= minMarketCap) ? 1.0f : 0.0f;
-                    float condCapMax = (cap <= maxMarketCap) ? 1.0f : 0.0f;
+                // inline calcRevScore (fixed reversion fallacy)
+                float bbP = technicalData.get(dayOffset + 11);
+                float bbFact = (bbP < 0.2f) ? (1.0f - bbP) : 0.5f;
+                float isBelow = (gap < 1.0f) ? 1.0f : 0.0f;
+                float distFromMA = isBelow * (1.0f - gap) / 0.20f;
+                distFromMA = Math.max(0.0f, Math.min(1.0f, distFromMA));
+                float scoreRev = distFromMA * bbFact * reversionWeight;
 
-                    int shortIdx = Math.max(d - shortLookback, stockStartOffset);
-                    float oldP = technicalData.get((globalStockIdx * totalDays + shortIdx) * TECH_DATA_STRIDE);
-                    float condShort1 = (d >= stockStartOffset + shortLookback) ? 1.0f : 0.0f;
-                    float condShort2 = (price < oldP * 0.8f) ? 1.0f : 0.0f;
-                    float mShort = (condShort1 * condShort2 == 1.0f) ? 0.0f : 1.0f;
+                // inline calcVolScore
+                float histVol = technicalData.get(dayOffset + 2);
+                float blendVol = (histVol + (technicalData.get(dayOffset + 10) / (price + 1e-4f))) / 2.0f;
+                float vVol = blendVol / 0.05f;
+                vVol = Math.max(0.0f, Math.min(1.0f, vVol));
+                float scoreVol = (1.0f - vVol) * volWeight;
 
-                    float condPrice = (price >= 0.05f) ? 1.0f : 0.0f;
+                // inline calcRVolScore
+                float rvol = technicalData.get(dayOffset + 4) / (technicalData.get(dayOffset + 5) + 1e-6f);
+                float vRvol = (rvol - 0.5f) / 1.5f;
+                vRvol = Math.max(0.0f, Math.min(1.0f, vRvol));
+                float scoreRVol = vRvol * rvolWeight;
 
-                    float isActive = condCapMin * condCapMax * mShort * condPrice;
-                    int shouldSkip = (int) (1.0f - isActive);
+                // inline calcMomScore
+                int momStartNow = Math.max(d - momTf + 1, stockStartOffset);
+                float currentMomSum = technicalData.get(dayOffset + 1) - basePSum;
+                
+                // Short-circuit boundary checks in sequential fallback mode using ternaries:
+                float momNowSub = (momStartNow > stockStartOffset) ? (technicalData.get((stockBaseIndex + momStartNow - 1) * TECH_DATA_STRIDE + 1) - basePSum) : 0.0f;
+                float avgPNow = (currentMomSum - momNowSub) / Math.max(1.0f, (float) (d - momStartNow + 1));
 
-                    float heuristic = 0.0f;
-                    
-                    // inline getMovingAverage
-                    int maStart = Math.max(d - longAvgTimeframe + 1, stockStartOffset);
-                    float maDivisor = Math.max((float) (d - maStart + 1), 1.0f);
+                int hasPrev = (d - momTf >= stockStartOffset) ? 1 : 0;
+                int dLookback = hasPrev * (d - momTf) + (1 - hasPrev) * stockStartOffset;
+                int momStartThen = Math.max(dLookback - momTf + 1, stockStartOffset);
+                float lookbackMomSum = technicalData.get((stockBaseIndex + dLookback) * TECH_DATA_STRIDE + 1) - basePSum;
+                
+                // Short-circuit boundary checks in sequential fallback mode using ternaries:
+                float momThenSub = (momStartThen > stockStartOffset) ? (technicalData.get((stockBaseIndex + momStartThen - 1) * TECH_DATA_STRIDE + 1) - basePSum) : 0.0f;
+                float avgPThenVal = (lookbackMomSum - momThenSub) / Math.max(1.0f, (float) (dLookback - momStartThen + 1));
+                float avgPThen = (float) hasPrev * avgPThenVal;
 
-                    float currentSum = technicalData.get(dayOffset + 1) - basePSum;
-                    float isMaStartGreater = (maStart > stockStartOffset) ? 1.0f : 0.0f;
-                    float prevWindowSum = isMaStartGreater * (technicalData.get((stockBaseIndex + maStart - 1) * TECH_DATA_STRIDE + 1) - basePSum);
-                    float movingAvg = (currentSum - prevWindowSum) / maDivisor;
-                    movingAvg = (movingAvg < 0.01f) ? price : movingAvg;
+                float isAvgPThenGreater = (avgPThen > 0.0f) ? 1.0f : 0.0f;
+                float momRatio = isAvgPThenGreater * (avgPNow / (avgPThen + 1e-6f)) + (1.0f - isAvgPThenGreater) * 1.0f;
+                float isMacdPos = (technicalData.get(dayOffset + 9) > 0.0f) ? 1.0f : 0.0f;
+                float macdFactor = isMacdPos * 1.2f + (1.0f - isMacdPos) * 0.8f;
+                float vMom = (momRatio - minRate) / (minRate * 0.3f + 1e-6f);
+                vMom = Math.max(0.0f, Math.min(1.0f, vMom));
+                float scoreMom = vMom * macdFactor * momWeight;
 
-                    float gap = price / (movingAvg + 1e-6f);
+                float fullHeuristic = (scoreGap + scoreRating + scoreRev + scoreVol + scoreRVol + scoreMom) / totalWeight;
+                heuristic = (float) (1 - shouldSkip) * fullHeuristic;
 
-                    // inline calcGapScore
-                    float rating = technicalData.get(dayOffset + 3);
-                    float isGreater = (rating > 4.0f) ? 1.0f : 0.0f;
-                    float currentMaxGap = isGreater * (maHigher * aboveAvgRatingPricePerc) + (1.0f - isGreater) * maHigher;
-                    float vGap = (gap - maLower) / (currentMaxGap - maLower + 1e-6f);
-                    vGap = Math.max(0.0f, Math.min(1.0f, vGap));
-                    float scoreGap = (1.0f - vGap) * gapWeight;
+                int condBuy1 = (tradingState == 0) ? 1 : 0;
+                int condBuy2 = (d < buyLimit) ? 1 : 0;
+                int condBuy3 = (heuristic > buyThreshold) ? 1 : 0;
+                int doBuy = condBuy1 * condBuy2 * condBuy3 * isThreadActive;
 
-                    // inline calcBaseScore's rating component
-                    float isGreaterR = (maxR > minR) ? 1.0f : 0.0f;
-                    float vRating = isGreaterR * ((rating - minR) / (maxR - minR + 1e-6f)) + (1.0f - isGreaterR) * 1.0f;
-                    vRating = Math.max(0.0f, Math.min(1.0f, vRating));
-                    float scoreRating = vRating * ratingWeight;
+                int condSell1 = (tradingState == 1) ? 1 : 0;
+                int condSell2 = (price < movingAvg * sellCutoff) ? 1 : 0;
+                int condSell3 = (d == finalLimit - 1) ? 1 : 0;
+                int condSell23 = (condSell2 + condSell3 > 0) ? 1 : 0;
+                int doSell = condSell1 * condSell23 * isThreadActive;
 
-                    // inline calcRevScore (fixed reversion fallacy)
-                    float bbP = technicalData.get(dayOffset + 11);
-                    float bbFact = (bbP < 0.2f) ? (1.0f - bbP) : 0.5f;
-                    float isBelow = (gap < 1.0f) ? 1.0f : 0.0f;
-                    float distFromMA = isBelow * (1.0f - gap) / 0.20f;
-                    distFromMA = Math.max(0.0f, Math.min(1.0f, distFromMA));
-                    float scoreRev = distFromMA * bbFact * reversionWeight;
+                entryPrice = doBuy * price + (1 - doBuy) * entryPrice;
+                entryDay = doBuy * (float) d + (1 - doBuy) * entryDay;
 
-                    // inline calcVolScore
-                    float histVol = technicalData.get(dayOffset + 2);
-                    float blendVol = (histVol + (technicalData.get(dayOffset + 10) / (price + 1e-4f))) / 2.0f;
-                    float vVol = blendVol / 0.05f;
-                    vVol = Math.max(0.0f, Math.min(1.0f, vVol));
-                    float scoreVol = (1.0f - vVol) * volWeight;
+                float dur = (float) d - entryDay;
+                float rawRet = (price - entryPrice) / (entryPrice + 1e-6f) - 0.003f; // Align slippage to 0.003f
 
-                    // inline calcRVolScore
-                    float rvol = technicalData.get(dayOffset + 4) / (technicalData.get(dayOffset + 5) + 1e-6f);
-                    float vRvol = (rvol - 0.5f) / 1.5f;
-                    vRvol = Math.max(0.0f, Math.min(1.0f, vRvol));
-                    float scoreRVol = vRvol * rvolWeight;
+                rawRet = Math.max(-1.0f, Math.min(1.0f, rawRet));
 
-                    // inline calcMomScore
-                    int momStartNow = Math.max(d - momTf + 1, stockStartOffset);
-                    float currentMomSum = technicalData.get(dayOffset + 1) - basePSum;
-                    float isMomStartGreater = (momStartNow > stockStartOffset) ? 1.0f : 0.0f;
-                    float momNowSub = isMomStartGreater * (technicalData.get((stockBaseIndex + momStartNow - 1) * TECH_DATA_STRIDE + 1) - basePSum);
-                    float avgPNow = (currentMomSum - momNowSub) / Math.max(1.0f, (float) (d - momStartNow + 1));
+                float tradeLogRet = TornadoMath.log(1.0f + rawRet);
+                float excessLogRet = tradeLogRet - (dur * dailyRiskFreeRate);
+                float safeDur = Math.max(0.1f, dur);
+                float dailyExcess = excessLogRet / safeDur;
 
-                    int hasPrev = (d - momTf >= stockStartOffset) ? 1 : 0;
-                    int dLookback = hasPrev * (d - momTf) + (1 - hasPrev) * stockStartOffset;
-                    int momStartThen = Math.max(dLookback - momTf + 1, stockStartOffset);
-                    float lookbackMomSum = technicalData.get((stockBaseIndex + dLookback) * TECH_DATA_STRIDE + 1) - basePSum;
-                    float isMomThenGreater = (momStartThen > stockStartOffset) ? 1.0f : 0.0f;
-                    float momThenSub = isMomThenGreater * (technicalData.get((stockBaseIndex + momStartThen - 1) * TECH_DATA_STRIDE + 1) - basePSum);
-                    float avgPThenVal = (lookbackMomSum - momThenSub) / Math.max(1.0f, (float) (dLookback - momStartThen + 1));
-                    float avgPThen = (float) hasPrev * avgPThenVal;
+                int condCommit1 = (doSell == 1) ? 1 : 0;
+                int condCommit2 = (dur > 0.1f) ? 1 : 0;
+                int commit = condCommit1 * condCommit2;
 
-                    float isAvgPThenGreater = (avgPThen > 0.0f) ? 1.0f : 0.0f;
-                    float momRatio = isAvgPThenGreater * (avgPNow / (avgPThen + 1e-6f)) + (1.0f - isAvgPThenGreater) * 1.0f;
-                    float isMacdPos = (technicalData.get(dayOffset + 9) > 0.0f) ? 1.0f : 0.0f;
-                    float macdFactor = isMacdPos * 1.2f + (1.0f - isMacdPos) * 0.8f;
-                    float vMom = (momRatio - minRate) / (minRate * 0.3f + 1e-6f);
-                    vMom = Math.max(0.0f, Math.min(1.0f, vMom));
-                    float scoreMom = vMom * macdFactor * momWeight;
+                trades += (float) commit;
+                holdingDays += (float) commit * dur;
+                sumExcess += (float) commit * excessLogRet;
+                sumSqExcess += (float) commit * (dailyExcess * dailyExcess * dur);
+                sumTotalExcess += (float) commit * tradeLogRet;
 
-                    float fullHeuristic = (scoreGap + scoreRating + scoreRev + scoreVol + scoreRVol + scoreMom) / totalWeight;
-                    heuristic = (float) (1 - shouldSkip) * fullHeuristic;
-
-                    int condBuy1 = (tradingState == 0) ? 1 : 0;
-                    int condBuy2 = (d < buyLimit) ? 1 : 0;
-                    int condBuy3 = (heuristic > buyThreshold) ? 1 : 0;
-                    int doBuy = condBuy1 * condBuy2 * condBuy3;
-
-                    int condSell1 = (tradingState == 1) ? 1 : 0;
-                    int condSell2 = (price < movingAvg * sellCutoff) ? 1 : 0;
-                    int condSell3 = (d == finalLimit - 1) ? 1 : 0;
-                    int condSell23 = (condSell2 + condSell3 > 0) ? 1 : 0;
-                    int doSell = condSell1 * condSell23;
-
-                    entryPrice = doBuy * price + (1 - doBuy) * entryPrice;
-                    entryDay = doBuy * (float) d + (1 - doBuy) * entryDay;
-
-                    float dur = (float) d - entryDay;
-                    float rawRet = (price - entryPrice) / (entryPrice + 1e-6f) - 0.003f; // Align slippage to 0.003f
-
-                    rawRet = Math.max(-1.0f, Math.min(1.0f, rawRet));
-
-                    float tradeLogRet = (float) Math.log(1.0f + rawRet);
-                    float excessLogRet = tradeLogRet - (dur * dailyRiskFreeRate);
-                    float safeDur = Math.max(0.1f, dur);
-                    float dailyExcess = excessLogRet / safeDur;
-
-                    int condCommit1 = (doSell == 1) ? 1 : 0;
-                    int condCommit2 = (dur > 0.1f) ? 1 : 0;
-                    int commit = condCommit1 * condCommit2;
-
-                    trades += (float) commit;
-                    holdingDays += (float) commit * dur;
-                    sumExcess += (float) commit * excessLogRet;
-                    sumSqExcess += (float) commit * (dailyExcess * dailyExcess * dur);
-                    sumTotalExcess += (float) commit * tradeLogRet;
-
-                    tradingState = doBuy * 1 + doSell * 0 + (1 - doBuy - doSell) * tradingState;
-                }
-
-                optimizationResults.set(outputIdx, optimizationResults.get(outputIdx) + trades);
-                optimizationResults.set(outputIdx + 1, optimizationResults.get(outputIdx + 1) + holdingDays);
-                optimizationResults.set(outputIdx + 2, optimizationResults.get(outputIdx + 2) + sumExcess);
-                optimizationResults.set(outputIdx + 3, optimizationResults.get(outputIdx + 3) + sumSqExcess);
-                optimizationResults.set(outputIdx + 4, optimizationResults.get(outputIdx + 4) + sumTotalExcess);
+                tradingState = doBuy * 1 + doSell * 0 + (1 - doBuy - doSell) * tradingState;
             }
+
+            optimizationResults.set(outputIdx, trades);
+            optimizationResults.set(outputIdx + 1, holdingDays);
+            optimizationResults.set(outputIdx + 2, sumExcess);
+            optimizationResults.set(outputIdx + 3, sumSqExcess);
+            optimizationResults.set(outputIdx + 4, sumTotalExcess);
         }
     }
 
@@ -512,9 +520,9 @@ public class TornadoVmOptimizer implements Optimizer {
             parameterMatrix = new FloatArray(maxBatchSize * PARAMETER_STRIDE);
         }
 
-        // Minimal footprint buffer (No gridCount multiplier!)
-        if (optimizationResults == null || optimizationResults.getSize() < maxBatchSize * maxStocks * OPTIMIZATION_RESULT_STRIDE) {
-            optimizationResults = new FloatArray(maxBatchSize * maxStocks * OPTIMIZATION_RESULT_STRIDE);
+        int maxResultsSize = maxBatchSize * maxStocks * gridCount * OPTIMIZATION_RESULT_STRIDE;
+        if (optimizationResults == null || optimizationResults.getSize() < maxResultsSize) {
+            optimizationResults = new FloatArray(maxResultsSize);
         }
 
         if (stockOffsets == null || stockOffsets.getSize() < maxStocks) {
