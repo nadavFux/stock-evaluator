@@ -296,9 +296,9 @@ public class CpuParamOptimizer implements Optimizer {
                 config.timeFrameForUpwardLongAvg.get(0), config.aboveAvgRatingPricePerc.get(0), config.timeFrameForUpwardShortPrice.get(0),
                 config.timeFrameForOscillator.get(0), config.maxRSI.get(0), config.minMarketCap.get(0), config.longMovingAvgTimes.get(0),
                 config.minRatesOfAvgInc.get(0), config.maxPERatios.get(0), config.minRatings.get(0), config.maxRatings.get(0), config.maxMarketCap.get(0),
-                config.riskFreeRate.get(0), config.buyThreshold == null || config.buyThreshold.isEmpty() ? 0.65 : config.buyThreshold.get(0),
+                config.riskFreeRate.get(0), config.buyThreshold == null || config.buyThreshold.isEmpty() ? 1.8 : config.buyThreshold.get(0),
                 config.movingAvgGapWeight == null || config.movingAvgGapWeight.isEmpty() ? 0.2 : config.movingAvgGapWeight.get(0),
-                0.15, 0.2, 0.15, 0.1, 0.1, 0.1
+                0.3, 0.3, 0.3, 0.3, 0.3, 0.3
         );
     }
 
