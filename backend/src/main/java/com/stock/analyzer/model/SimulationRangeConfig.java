@@ -59,6 +59,9 @@ public class SimulationRangeConfig {
     @NotNull
     public String outputPath;
 
+    // Parameter search ranges
+    public List<Integer> cooldownDays;
+
     // Optimization Search Config
     public Integer centersCount;
     public Integer populationSize;

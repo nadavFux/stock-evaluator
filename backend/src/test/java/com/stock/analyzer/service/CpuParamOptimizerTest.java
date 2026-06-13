@@ -60,7 +60,7 @@ public class CpuParamOptimizerTest {
     private SimulationParams createDefaultParams() {
         return new SimulationParams(
             0.95, 0.9, 1.1, 50, 1.05, 20, 10, 70, 0, 20, 0, 100, 1, 5, 1000000000, 0.0, 0.65,
-            0.2, 0.15, 0.2, 0.15, 0.1, 0.1, 0.1
+            0.2, 0.15, 0.2, 0.15, 0.1, 0.1, 0.1, 5
         );
     }
 }

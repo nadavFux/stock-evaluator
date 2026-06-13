@@ -1,6 +1,8 @@
 package com.stock.analyzer.service;
 
 import com.stock.analyzer.model.*;
+import com.stock.analyzer.core.Simulation;
+import ai.djl.util.Pair;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
@@ -70,10 +72,10 @@ public class TornadoVmOptimizerTest {
         TornadoVmOptimizer optimizer = new TornadoVmOptimizer(config);
         SimulationParams params = new SimulationParams(
                 0.95, 0.9, 1.1, 50, 1.05, 20, 10, 70, 0, 20, 0, 100, 1, 5, 1000000000, 0.0, 0.65,
-                0.2, 0.15, 0.2, 0.15, 0.1, 0.1, 0.1
+                0.2, 0.15, 0.2, 0.15, 0.1, 0.1, 0.1, 5
         );
 
-        FloatArray array = new FloatArray(24);
+        FloatArray array = new FloatArray(25);
 
         Method method = TornadoVmOptimizer.class.getDeclaredMethod("mapParamsToFloatArray", SimulationParams.class, FloatArray.class, int.class);
         method.setAccessible(true);
@@ -82,6 +84,7 @@ public class TornadoVmOptimizerTest {
         assertEquals(0.95f, array.get(0), 0.001);
         assertEquals(0.9f, array.get(1), 0.001);
         assertEquals(0.1f, array.get(23), 0.001); // volatilityCompressionWeight
+        assertEquals(5.0f, array.get(24), 0.001); // cooldownDays
     }
 
     @Test
@@ -124,7 +127,7 @@ public class TornadoVmOptimizerTest {
 
         SimulationParams params = new SimulationParams(
                 0.95, 0.9, 1.1, 50, 1.05, 20, 10, 70, 0, 20, 0, 100, 1, 5, 1000000000, 0.0, 0.05,
-                0.2, 0.15, 0.2, 0.15, 0.1, 0.1, 0.1
+                0.2, 0.15, 0.2, 0.15, 0.1, 0.1, 0.1, 5
         );
 
         IntArray subset = new IntArray(pkg.stockCount);
@@ -173,7 +176,7 @@ public class TornadoVmOptimizerTest {
         // Select a variety of parameters to test different code paths in the kernel
         SimulationParams params = new SimulationParams(
                 0.95, 0.9, 1.1, 50, 1.05, 20, 10, 70, 0, 20, 0, 100, 1.0, 5.0, 1000000000.0, 0.05, 0.2,
-                0.2, 0.15, 0.2, 0.15, 0.1, 0.1, 0.1
+                0.2, 0.15, 0.2, 0.15, 0.1, 0.1, 0.1, 5
         );
 
         IntArray subsetGpu = new IntArray(pkg.stockCount);
@@ -241,6 +244,110 @@ public class TornadoVmOptimizerTest {
     }
 
 
+    @Test
+    public void testParityWithNegativeReturn() throws Exception {
+        TornadoVmOptimizer gpuOptimizer = new TornadoVmOptimizer(config);
+        CpuParamOptimizer cpuOptimizer = new CpuParamOptimizer(config);
+
+        List<StockGraphState> stocks = generateNegativeReturnStocks(20, 150);
+        SimulationDataPackage pkg = new SimulationDataPackage(stocks);
+
+        // Preallocate buffers and flatten
+        Method allocMethod = TornadoVmOptimizer.class.getDeclaredMethod("preallocateBuffers", int.class, int.class);
+        allocMethod.setAccessible(true);
+        allocMethod.invoke(gpuOptimizer, pkg.stockCount, pkg.daysCount);
+
+        Method flatMethod = TornadoVmOptimizer.class.getDeclaredMethod("flattenToTechData", SimulationDataPackage.class);
+        flatMethod.setAccessible(true);
+        flatMethod.invoke(gpuOptimizer, pkg);
+
+        SimulationParams params = new SimulationParams(
+                0.95, 0.9, 1.1, 20, 1.5, 5, 14, 80.0, 1000.0, 100, 0.1, 90, 1.0, 5.0, 100000000000.0, 0.05, 0.2,
+                0.2, 0.15, 0.2, 0.15, 0.1, 0.1, 0.1, 5
+        );
+
+        IntArray subsetGpu = new IntArray(pkg.stockCount);
+        List<Integer> subsetCpu = new ArrayList<>();
+        for (int i = 0; i < pkg.stockCount; i++) {
+            subsetGpu.set(i, i);
+            subsetCpu.add(i);
+        }
+
+        List<Optimizer.CandidateResult> gpuResults = gpuOptimizer.evaluateGpu2D(List.of(params), subsetGpu, pkg, false);
+        List<Optimizer.CandidateResult> cpuResults = cpuOptimizer.evaluateParallel(List.of(params), subsetCpu, pkg, false);
+
+        assertNotNull(gpuResults);
+        assertNotNull(cpuResults);
+
+        // Access the CpuParamOptimizer and trace the trades using reflection
+        Pair<Integer, Integer> stats = null;
+        Simulation sim = new Simulation(params);
+        try {
+            Method findTradesMethod = CpuParamOptimizer.class.getDeclaredMethod("findTrades", Simulation.class, SimulationDataPackage.class, List.class);
+            findTradesMethod.setAccessible(true);
+            stats = (Pair<Integer, Integer>) findTradesMethod.invoke(cpuOptimizer, sim, pkg, subsetCpu);
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
+
+        System.out.println("=== DIAGNOSTIC TRADES REPORT ===");
+        System.out.println("Total Trades: " + sim.getTradeCount());
+        try {
+            Field gainsField = Simulation.class.getDeclaredField("gains");
+            gainsField.setAccessible(true);
+            double[] gains = (double[]) gainsField.get(sim);
+            Field holdDaysField = Simulation.class.getDeclaredField("holdDays");
+            holdDaysField.setAccessible(true);
+            int[] holdDays = (int[]) holdDaysField.get(sim);
+
+            for (int i = 0; i < sim.getTradeCount(); i++) {
+                System.out.printf("  Trade %d: Gain = %.4f, Days = %d\n", i, gains[i], holdDays[i]);
+            }
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
+
+        double scoreCpu = sim.calculateScore(stats != null ? (long) subsetCpu.size() * stats.getValue() : 1);
+        System.out.println("Computed CPU Score: " + scoreCpu);
+        System.out.println("=================================");
+
+        System.out.println("=== NEGATIVE RETURN PARITY REPORT ===");
+        System.out.println("GPU Score: " + gpuResults.get(0).score() + " | AvgReturn: " + gpuResults.get(0).yearlyGain());
+        System.out.println("CPU Score: " + cpuResults.get(0).score() + " | AvgReturn: " + cpuResults.get(0).yearlyGain());
+        System.out.println("=====================================");
+
+        assertEquals(cpuResults.get(0).yearlyGain(), gpuResults.get(0).yearlyGain(), 0.01, "Avg returns must be equal");
+        assertEquals(cpuResults.get(0).score(), gpuResults.get(0).score(), 0.01, "Scores must be equal");
+    }
+
+    public static List<StockGraphState> generateNegativeReturnStocks(int count, int days) {
+        java.util.Random rand = new java.util.Random(42);
+        List<StockGraphState> stocks = new ArrayList<>();
+        for (int i = 0; i < count; i++) {
+            String ticker = "NEG" + i;
+            List<Double> prices = new ArrayList<>();
+            List<Double> volumes = new ArrayList<>();
+            List<Double> ratings = new ArrayList<>();
+            List<Double> epss = new ArrayList<>();
+            List<Double> caps = new ArrayList<>();
+            List<String> dates = new ArrayList<>();
+
+            double currentPrice = 100.0;
+            for (int d = 0; d < days; d++) {
+                currentPrice *= 0.99; // Continual drop
+                prices.add(currentPrice);
+                volumes.add(1000000.0);
+                ratings.add(4.5);
+                epss.add(5.0);
+                caps.add(1000000000.0);
+                dates.add("2023-01-01");
+            }
+            stocks.add(new StockGraphState(new Stock("1", ticker, ticker, "NYSE", "2023", 0.1f, 0.0, 0.0, "id", "sector", 0.0),
+                    ratings, 0.0, 0.0, 0.0, prices, volumes, new ArrayList<>(), dates, epss, caps));
+        }
+        return stocks;
+    }
+
     public static List<StockGraphState> generateSyntheticStocks(int count, int days) {
         java.util.Random rand = new java.util.Random(42); // Fixed seed
         List<StockGraphState> stocks = new ArrayList<>();
@@ -270,3 +377,4 @@ public class TornadoVmOptimizerTest {
         return stocks;
     }
 }
+

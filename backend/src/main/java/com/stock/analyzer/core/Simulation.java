@@ -46,12 +46,12 @@ public class Simulation {
     }
 
     public static String GenerateKey(SimulationParams p) {
-        return String.format("%s,%s,%s,%d,%s,%d,%d,%s,%s,%d,%s,%d,%s,%s,%s,%s,%s",
+        return String.format("%s,%s,%s,%d,%s,%d,%d,%s,%s,%d,%s,%d,%s,%s,%s,%s,%s,%d",
                 p.sellCutOffPerc(), p.lowerPriceToLongAvgBuyIn(), p.higherPriceToLongAvgBuyIn(),
                 p.timeFrameForUpwardLongAvg(), p.aboveAvgRatingPricePerc(), p.timeFrameForUpwardShortPrice(),
                 p.timeFrameForOscillator(), p.maxRSI(), p.minMarketCap(), p.longMovingAvgTime(),
                 p.minRateOfAvgInc(), p.maxPERatio(), p.minRating(), p.maxRating(), p.maxMarketCap(),
-                p.riskFreeRate(), p.buyThreshold());
+                p.riskFreeRate(), p.buyThreshold(), p.cooldownDays());
     }
 
     /**

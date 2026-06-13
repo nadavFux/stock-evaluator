@@ -13,7 +13,7 @@ public class RecommendationValidationTest {
         // Use loose parameters and high weights for MA Gap to guarantee a trigger
         SimulationParams params = new SimulationParams(
             0.95, 0.1, 5.0, 50, 5.0, 20, 10, 99, 0, 20, 0.0, 100, 1, 5, 100000000000.0, 0.05, 0.1,
-            0.9, 0.01, 0.01, 0.01, 0.01, 0.01, 0.05
+            0.9, 0.01, 0.01, 0.01, 0.01, 0.01, 0.05, 5
         );
 
         Stock stock = new Stock("1", "AAPL", "AAPL", "NAS", "2023-01-01", 1000000.0f, 4.5, 1.0, "ID", "Other", 1.0);

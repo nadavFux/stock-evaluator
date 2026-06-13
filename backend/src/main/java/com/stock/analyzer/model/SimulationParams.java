@@ -26,7 +26,8 @@ public record SimulationParams(
     double upwardIncRateWeight,
     double rvolWeight,
     double pegWeight,
-    double volatilityCompressionWeight
+    double volatilityCompressionWeight,
+    int cooldownDays
 ) {
     public SimulationParams {
         if (minRating >= maxRating) {
@@ -68,6 +69,7 @@ public record SimulationParams(
         private double rvolWeight;
         private double pegWeight;
         private double volatilityCompressionWeight;
+        private int cooldownDays = 5;
 
         public Builder(SimulationParams other) {
             this.sellCutOffPerc = other.sellCutOffPerc();
@@ -95,8 +97,10 @@ public record SimulationParams(
             this.rvolWeight = other.rvolWeight();
             this.pegWeight = other.pegWeight();
             this.volatilityCompressionWeight = other.volatilityCompressionWeight();
+            this.cooldownDays = other.cooldownDays();
         }
 
+        public Builder cooldownDays(int val) { this.cooldownDays = val; return this; }
         public Builder sellCutOffPerc(double val) { this.sellCutOffPerc = val; return this; }
         public Builder lowerPriceToLongAvgBuyIn(double val) { this.lowerPriceToLongAvgBuyIn = val; return this; }
         public Builder higherPriceToLongAvgBuyIn(double val) { this.higherPriceToLongAvgBuyIn = val; return this; }
@@ -129,7 +133,8 @@ public record SimulationParams(
                 aboveAvgRatingPricePerc, timeFrameForUpwardShortPrice, timeFrameForOscillator, maxRSI, 
                 minMarketCap, longMovingAvgTime, minRateOfAvgInc, maxPERatio, minRating, maxRating, 
                 maxMarketCap, riskFreeRate, buyThreshold,
-                movingAvgGapWeight, reversionToMeanWeight, ratingWeight, upwardIncRateWeight, rvolWeight, pegWeight, volatilityCompressionWeight
+                movingAvgGapWeight, reversionToMeanWeight, ratingWeight, upwardIncRateWeight, rvolWeight, pegWeight, volatilityCompressionWeight,
+                cooldownDays
             );
         }
     }

@@ -38,7 +38,7 @@ public class TornadoVmOptimizer implements Optimizer {
     private static IntArray simulationGrid;
     // Buffer Strides and Layout Constants
     private static final int TECH_DATA_STRIDE = 12;
-    private static final int PARAMETER_STRIDE = 24;
+    private static final int PARAMETER_STRIDE = 25;
     private static final int OPTIMIZATION_RESULT_STRIDE = 5;
     private static final int GRID_TASK_STRIDE = 3;
 
@@ -259,9 +259,7 @@ public class TornadoVmOptimizer implements Optimizer {
                                            int subsetSize, int gridCount, boolean rescue) {
         if (rescue) return -100.0 + trades;
 
-        // Relaxed trade density requirements (Consistent with Simulation.java)
-        // Ignore gridCount to avoid constant -100 on small datasets.
-        double minRequiredTrades = Math.max(50, (double) subsetSize * gridCount / 100.0);
+        double minRequiredTrades = Math.max(5, (double) subsetSize * gridCount / 100.0);
         if (trades < minRequiredTrades || totalHoldingDays < minRequiredTrades * 2.0) return -100.0;
 
         // excess is sum(dailyExcess * dur) = sum(excessLogRet)
@@ -281,7 +279,7 @@ public class TornadoVmOptimizer implements Optimizer {
         // Resolve Negative Sharpe Paradox: Penalize volatility when returns are negative
         if (annualizedExcess < 0) sharpe = annualizedExcess * (annualizedStdDev + 1.0);
 
-        return sharpe + (trades * 0.000001);
+        return sharpe;
     }
 
     /**
@@ -322,6 +320,7 @@ public class TornadoVmOptimizer implements Optimizer {
             int longAvgTimeframe = (int) parameterMatrix.get(paramBase + 9);
             float dailyRiskFreeRate = parameterMatrix.get(paramBase + 15);
             float buyThreshold = parameterMatrix.get(paramBase + 16);
+            int cooldownDays = (int) parameterMatrix.get(paramBase + 24);
 
             int stockBaseIndex = globalStockIdx * totalDays;
             float basePSum = (stockStartOffset > 0) ? technicalData.get((stockBaseIndex + stockStartOffset - 1) * TECH_DATA_STRIDE + 1) : 0.0f;
@@ -370,6 +369,7 @@ public class TornadoVmOptimizer implements Optimizer {
             int tradingState = 0;
             float entryPrice = 0.0f, entryDay = 0.0f, highestPrice = 0.0f;
             float trades = 0, holdingDays = 0, sumExcess = 0, sumSqExcess = 0, sumTotalExcess = 0;
+            int cooldownUntilDay = 0;
 
             for (int d = simStart; d < finalLimit; d++) {
                 int dayOffset = (stockBaseIndex + d) * TECH_DATA_STRIDE;
@@ -471,10 +471,11 @@ public class TornadoVmOptimizer implements Optimizer {
                 float fullHeuristic = (scoreGap + scoreRating + scoreRev + scoreVol + scoreRVol + scoreMom) / totalWeight;
                 heuristic = (float) (1 - shouldSkip) * fullHeuristic;
 
+                int isCooldowned = (d < cooldownUntilDay) ? 1 : 0;
                 int condBuy1 = (tradingState == 0) ? 1 : 0;
                 int condBuy2 = (d < buyLimit) ? 1 : 0;
                 int condBuy3 = (heuristic > buyThreshold) ? 1 : 0;
-                int doBuy = condBuy1 * condBuy2 * condBuy3 * isThreadActive;
+                int doBuy = condBuy1 * condBuy2 * condBuy3 * isThreadActive * (1 - isCooldowned);
 
                 int condSell1 = (tradingState == 1) ? 1 : 0;
                 int condSell2 = (price < highestPrice * sellCutoff) ? 1 : 0;
@@ -507,6 +508,7 @@ public class TornadoVmOptimizer implements Optimizer {
                 sumTotalExcess += (float) commit * tradeLogRet;
 
                 tradingState = doBuy * 1 + doSell * 0 + (1 - doBuy - doSell) * tradingState;
+                cooldownUntilDay = doSell * (d + cooldownDays + 1) + (1 - doSell) * cooldownUntilDay;
             }
 
             optimizationResults.set(outputIdx, trades);
@@ -605,6 +607,7 @@ public class TornadoVmOptimizer implements Optimizer {
         array.set(offset + 21, (float) params.rvolWeight());
         array.set(offset + 22, (float) params.pegWeight());
         array.set(offset + 23, (float) params.volatilityCompressionWeight());
+        array.set(offset + 24, (float) params.cooldownDays());
     }
 
     private SimulationParams centerParamsFromConfig() {
@@ -615,7 +618,8 @@ public class TornadoVmOptimizer implements Optimizer {
                 config.minRatesOfAvgInc.get(0), config.maxPERatios.get(0), config.minRatings.get(0), config.maxRatings.get(0), config.maxMarketCap.get(0),
                 config.riskFreeRate.get(0), config.buyThreshold == null || config.buyThreshold.isEmpty() ? 0.65 : config.buyThreshold.get(0),
                 config.movingAvgGapWeight == null || config.movingAvgGapWeight.isEmpty() ? 0.2 : config.movingAvgGapWeight.get(0),
-                0.15, 0.2, 0.15, 0.1, 0.1, 0.1
+                0.15, 0.2, 0.15, 0.1, 0.1, 0.1,
+                config.cooldownDays == null || config.cooldownDays.isEmpty() ? 5 : config.cooldownDays.get(0)
         );
     }
 

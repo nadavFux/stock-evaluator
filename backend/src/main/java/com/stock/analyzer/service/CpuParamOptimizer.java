@@ -150,9 +150,9 @@ public class CpuParamOptimizer implements Optimizer {
                 // Total evaluation instances: stocks * grid points
                 long totalEvaluations = (long) stockSubset.size() * frames;
 
-                // Relaxed trade density requirements (Consistent with GPU fixes)
-                // Ignore totalEvaluations (gridCount) to avoid constant -100 on small datasets.
-                boolean hasVolume = trades >= 5;
+                // Aligned trade density requirements
+                double minRequiredTrades = Math.max(5, (double) stockSubset.size() * frames / 100.0);
+                boolean hasVolume = trades >= minRequiredTrades;
                 double score = rescue ? (-100.0 + trades) : (hasVolume ? sim.calculateScore(totalEvaluations) : -100.0);
                 double yearlyGain = sim.getYearlyGain();
 
@@ -214,8 +214,10 @@ public class CpuParamOptimizer implements Optimizer {
         int absoluteLimit = (selectTime > 0) ? Math.min(timeStart + searchTime + selectTime, pkg.daysCount) : pkg.daysCount;
 
         sim.addSimulationDays(absoluteLimit - timeStart);
+        int cooldownUntil = -1;
 
         for (int i = timeStart; i < searchLimit; i++) {
+            if (i < cooldownUntil) continue;
             if (sim.calculateHeuristic(pkg, sIdx, i) > sim.params.buyThreshold()) {
                 double buyPrice = pkg.closePrices[sIdx][i];
 
@@ -236,6 +238,7 @@ public class CpuParamOptimizer implements Optimizer {
 
                     if (price < (highestPrice * sim.params.sellCutOffPerc()) || (curr == absoluteLimit - 1)) {
                         sim.recordTrade((price - buyPrice) / buyPrice, j);
+                        cooldownUntil = curr + sim.params.cooldownDays() + 1;
                         i = curr;
                         break;
                     }
@@ -286,7 +289,8 @@ public class CpuParamOptimizer implements Optimizer {
                 clamp(c.upwardIncRateWeight() + rand(r), 0.0, 1.0),
                 clamp(c.rvolWeight() + rand(r), 0.0, 1.0),
                 clamp(c.pegWeight() + rand(r), 0.0, 1.0),
-                clamp(c.volatilityCompressionWeight() + rand(r), 0.0, 1.0)
+                clamp(c.volatilityCompressionWeight() + rand(r), 0.0, 1.0),
+                clampInt(c.cooldownDays() + randInt((int) (5 * r)), 1, 20)
         );
     }
 
@@ -298,7 +302,8 @@ public class CpuParamOptimizer implements Optimizer {
                 config.minRatesOfAvgInc.get(0), config.maxPERatios.get(0), config.minRatings.get(0), config.maxRatings.get(0), config.maxMarketCap.get(0),
                 config.riskFreeRate.get(0), config.buyThreshold == null || config.buyThreshold.isEmpty() ? 0.9 : config.buyThreshold.get(0),
                 config.movingAvgGapWeight == null || config.movingAvgGapWeight.isEmpty() ? 0.2 : config.movingAvgGapWeight.get(0),
-                0.3, 0.3, 0.3, 0.3, 0.3, 0.3
+                0.3, 0.3, 0.3, 0.3, 0.3, 0.3,
+                config.cooldownDays == null || config.cooldownDays.isEmpty() ? 5 : config.cooldownDays.get(0)
         );
     }
 
