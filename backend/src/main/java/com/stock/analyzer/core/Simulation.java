@@ -206,7 +206,7 @@ public class Simulation {
     }
 
     private double normalize(double val, double min, double max) {
-        if (max <= min) return 1.0;
+        if (max <= min) return 0.0;
         return Math.max(0.0, Math.min(1.0, (val - min) / (max - min)));
     }
 

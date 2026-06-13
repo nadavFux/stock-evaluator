@@ -28,6 +28,20 @@ public record SimulationParams(
     double pegWeight,
     double volatilityCompressionWeight
 ) {
+    public SimulationParams {
+        if (minRating >= maxRating) {
+            if (minRating >= 4.9) {
+                minRating = 4.8;
+                maxRating = 4.9;
+            } else {
+                maxRating = minRating + 0.1;
+            }
+        }
+        if (lowerPriceToLongAvgBuyIn >= higherPriceToLongAvgBuyIn) {
+            higherPriceToLongAvgBuyIn = lowerPriceToLongAvgBuyIn + 0.05;
+        }
+    }
+
     public static class Builder {
         private double sellCutOffPerc;
         private double lowerPriceToLongAvgBuyIn;

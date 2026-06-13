@@ -228,12 +228,13 @@ public class CpuParamOptimizer implements Optimizer {
                 }
 
                 // Hold period simulation
+                double highestPrice = buyPrice;
                 for (int j = 1; j < absoluteLimit - i; j++) {
                     int curr = i + j;
                     double price = pkg.closePrices[sIdx][curr];
-                    double ma = pkg.getAvg(sIdx, curr, sim.params.longMovingAvgTime());
+                    highestPrice = Math.max(highestPrice, price);
 
-                    if (price < (ma * sim.params.sellCutOffPerc()) || (curr == absoluteLimit - 1)) {
+                    if (price < (highestPrice * sim.params.sellCutOffPerc()) || (curr == absoluteLimit - 1)) {
                         sim.recordTrade((price - buyPrice) / buyPrice, j);
                         i = curr;
                         break;

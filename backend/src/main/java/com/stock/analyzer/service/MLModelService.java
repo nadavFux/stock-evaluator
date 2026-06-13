@@ -74,8 +74,13 @@ public class MLModelService {
 
     public void collectSample(TrainingSample sample) {
         synchronized (sequences) {
-            sequences.add(sample.sequence());
-            labels.add(sample.actualGain());
+            if (sequences.size() < 10000) {
+                sequences.add(sample.sequence());
+                labels.add(sample.actualGain());
+                if (sequences.size() == 10000) {
+                    logger.info("Reached maximum sample capacity of 10000. Subsequent samples will be ignored.");
+                }
+            }
         }
     }
 

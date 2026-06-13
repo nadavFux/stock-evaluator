@@ -254,7 +254,7 @@ public class TornadoVmOptimizer implements Optimizer {
 
         // Relaxed trade density requirements (Consistent with Simulation.java)
         // Ignore gridCount to avoid constant -100 on small datasets.
-        double minRequiredTrades = Math.max(50, (double) subsetSize * gridCount / 100.0);
+        double minRequiredTrades = Math.max(50, (double) subsetSize * gridCount / 1000.0);
         if (trades < minRequiredTrades || totalHoldingDays < minRequiredTrades * 2.0) return -100.0;
 
         // excess is sum(dailyExcess * dur) = sum(excessLogRet)
@@ -361,7 +361,7 @@ public class TornadoVmOptimizer implements Optimizer {
             int minStart = stockStartOffset + longAvgTimeframe - 1;
 
             int tradingState = 0;
-            float entryPrice = 0.0f, entryDay = 0.0f;
+            float entryPrice = 0.0f, entryDay = 0.0f, highestPrice = 0.0f;
             float trades = 0, holdingDays = 0, sumExcess = 0, sumSqExcess = 0, sumTotalExcess = 0;
 
             for (int d = simStart; d < finalLimit; d++) {
@@ -410,7 +410,7 @@ public class TornadoVmOptimizer implements Optimizer {
 
                 // inline calcBaseScore's rating component
                 float isGreaterR = (maxR > minR) ? 1.0f : 0.0f;
-                float vRating = isGreaterR * ((rating - minR) / (maxR - minR + 1e-6f)) + (1.0f - isGreaterR) * 1.0f;
+                float vRating = isGreaterR * ((rating - minR) / (maxR - minR + 1e-6f)) + (1.0f - isGreaterR) * 0.0f;
                 vRating = Math.max(0.0f, Math.min(1.0f, vRating));
                 float scoreRating = vRating * ratingWeight;
 
@@ -470,13 +470,14 @@ public class TornadoVmOptimizer implements Optimizer {
                 int doBuy = condBuy1 * condBuy2 * condBuy3 * isThreadActive;
 
                 int condSell1 = (tradingState == 1) ? 1 : 0;
-                int condSell2 = (price < movingAvg * sellCutoff) ? 1 : 0;
+                int condSell2 = (price < highestPrice * sellCutoff) ? 1 : 0;
                 int condSell3 = (d == finalLimit - 1) ? 1 : 0;
                 int condSell23 = (condSell2 + condSell3 > 0) ? 1 : 0;
                 int doSell = condSell1 * condSell23 * isThreadActive;
 
                 entryPrice = doBuy * price + (1 - doBuy) * entryPrice;
                 entryDay = doBuy * (float) d + (1 - doBuy) * entryDay;
+                highestPrice = doBuy * price + (1 - doBuy) * Math.max(highestPrice, price);
 
                 float dur = (float) d - entryDay;
                 float rawRet = (price - entryPrice) / (entryPrice + 1e-6f) - 0.003f; // Align slippage to 0.003f

@@ -33,4 +33,14 @@ public class MLModelServiceTest {
         // Median (Q50) should be around 0.1
         assertTrue(prediction[1] > 0.0, "Prediction should be positive");
     }
+
+    @Test
+    public void testSampleLimit() {
+        MLModelService service = new MLModelService();
+        float[][] sequence = new float[30][12];
+        for (int i = 0; i < 10005; i++) {
+            service.collectSample(new TrainingSample(sequence, 0.1f));
+        }
+        assertEquals(10000, service.getSampleCount());
+    }
 }
