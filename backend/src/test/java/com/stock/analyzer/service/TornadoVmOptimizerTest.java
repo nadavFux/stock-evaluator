@@ -153,6 +153,64 @@ public class TornadoVmOptimizerTest {
         assertTrue(resultParams.sellCutOffPerc() > 0);
     }
 
+    @Test
+    public void testGpuCpuParity() throws Exception {
+        TornadoVmOptimizer gpuOptimizer = new TornadoVmOptimizer(config);
+        CpuParamOptimizer cpuOptimizer = new CpuParamOptimizer(config);
+
+        List<StockGraphState> stocks = generateSyntheticStocks(2, 150);
+        SimulationDataPackage pkg = new SimulationDataPackage(stocks);
+
+        // Preallocate buffers and flatten
+        Method allocMethod = TornadoVmOptimizer.class.getDeclaredMethod("preallocateBuffers", int.class, int.class);
+        allocMethod.setAccessible(true);
+        allocMethod.invoke(gpuOptimizer, pkg.stockCount, pkg.daysCount);
+
+        Method flatMethod = TornadoVmOptimizer.class.getDeclaredMethod("flattenToTechData", SimulationDataPackage.class);
+        flatMethod.setAccessible(true);
+        flatMethod.invoke(gpuOptimizer, pkg);
+
+        // Select a variety of parameters to test different code paths in the kernel
+        SimulationParams params = new SimulationParams(
+                0.95, 0.9, 1.1, 50, 1.05, 20, 10, 70, 0, 20, 0, 100, 1.0, 5.0, 1000000000.0, 0.05, 0.2,
+                0.2, 0.15, 0.2, 0.15, 0.1, 0.1, 0.1
+        );
+
+        IntArray subsetGpu = new IntArray(pkg.stockCount);
+        List<Integer> subsetCpu = new ArrayList<>();
+        for (int i = 0; i < pkg.stockCount; i++) {
+            subsetGpu.set(i, i);
+            subsetCpu.add(i);
+        }
+
+        // Test 1: Standard Evaluation Parity
+        List<Optimizer.CandidateResult> gpuResults = gpuOptimizer.evaluateGpu2D(List.of(params), subsetGpu, pkg, false);
+        List<Optimizer.CandidateResult> cpuResults = cpuOptimizer.evaluateParallel(List.of(params), subsetCpu, pkg, false);
+        List<Optimizer.CandidateResult> gpuRescueResults = gpuOptimizer.evaluateGpu2D(List.of(params), subsetGpu, pkg, true);
+        List<Optimizer.CandidateResult> cpuRescueResults = cpuOptimizer.evaluateParallel(List.of(params), subsetCpu, pkg, true);
+
+        assertNotNull(gpuResults);
+        assertNotNull(cpuResults);
+        assertEquals(1, gpuResults.size());
+        assertEquals(1, cpuResults.size());
+
+        double gpuScore = gpuResults.get(0).score();
+        double cpuScore = cpuResults.get(0).score();
+        double gpuRescueScore = gpuRescueResults.get(0).score();
+        double cpuRescueScore = cpuRescueResults.get(0).score();
+
+        System.out.println("=== DIAGNOSTIC PARITY REPORT ===");
+        System.out.println("GPU Score (Standard): " + gpuScore);
+        System.out.println("CPU Score (Standard): " + cpuScore);
+        System.out.println("GPU Trades (Rescue Score + 100): " + (gpuRescueScore + 100.0));
+        System.out.println("CPU Trades (Rescue Score + 100): " + (cpuRescueScore + 100.0));
+        System.out.println("=================================");
+
+        assertEquals(cpuRescueScore, gpuRescueScore, 0.001, "GPU and CPU trade counts should be exactly equal");
+        assertEquals(cpuScore, gpuScore, 0.001, "GPU and CPU standard scores should be within 0.001 of each other");
+    }
+
+
     public static List<StockGraphState> generateSyntheticStocks(int count, int days) {
         java.util.Random rand = new java.util.Random(42); // Fixed seed
         List<StockGraphState> stocks = new ArrayList<>();
