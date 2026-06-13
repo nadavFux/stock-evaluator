@@ -9,7 +9,8 @@ public class OptimizerFactory {
 
     public static Optimizer create(String type, SimulationRangeConfig config) {
         if (type == null) type = "cpu";
-        System.setProperty("tornado.compiler.fullInlining", "true");
+        //System.setProperty("tornado.compiler.fullInlining", "true");
+        //System.setProperty("tornado.fullDebug", "true");
         logger.info("Creating optimizer of type: {}", type);
 
         switch (type.toLowerCase()) {

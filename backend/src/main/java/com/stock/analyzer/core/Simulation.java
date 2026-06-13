@@ -214,10 +214,6 @@ public class Simulation {
         this.yearlyGain = 0; // Ignore as requested
         if (tradeCount < 2) return -100.0;
 
-        // Relaxed trade density requirements (Consistent with GPU)
-        // Using a percentage of stocks instead of evaluations to avoid gridCount bias.
-        if (tradeCount < 5) return -100.0;
-
         double sumExcess = 0.0;
         double sumSqExcess = 0.0;
         double totalHoldingDays = 0.0;
