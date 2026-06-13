@@ -279,7 +279,7 @@ public class CpuParamOptimizer implements Optimizer {
                 maxR,
                 Math.max(1000, c.maxMarketCap() * (1 + rand(r))), // Proportional multiplier
                 c.riskFreeRate(),
-                clamp(c.buyThreshold() + rand(0.60 * r), 0.30, 0.90),
+                clamp(c.buyThreshold() + rand(2.90 * r), 1, 3.90),
                 clamp(c.movingAvgGapWeight() + rand(r), 0.0, 1.0),
                 clamp(c.reversionToMeanWeight() + rand(r), 0.0, 1.0),
                 clamp(c.ratingWeight() + rand(r), 0.0, 1.0),
