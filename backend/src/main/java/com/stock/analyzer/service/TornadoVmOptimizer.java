@@ -42,7 +42,7 @@ public class TornadoVmOptimizer implements Optimizer {
     private static final int OPTIMIZATION_RESULT_STRIDE = 5;
     private static final int GRID_TASK_STRIDE = 3;
 
-    private static final int MAX_BATCH_SIZE = 70;
+    private static final int MAX_BATCH_SIZE = 25;
 
     // Simulation Constants
     private static final int DAYS_PER_YEAR = 252;
@@ -97,7 +97,7 @@ public class TornadoVmOptimizer implements Optimizer {
 
             // Initialize multiple starting points (centers) for the search
             int centersCount = (config.centersCount != null) ? config.centersCount : 5;
-            int populationSize = (config.populationSize != null) ? config.populationSize : 280;
+            int populationSize = (config.populationSize != null) ? config.populationSize : 100;
             int totalGenerations = (config.generations != null) ? config.generations : 8;
 
 
